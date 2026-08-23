@@ -109,3 +109,10 @@ retorno donde `gestor-db` y `auth` piden sus propias credenciales a
 ```
 
 `tests/test_crypto.py` cubre el cifrado sin red ni base.
+
+## Despliegue
+
+`git push` a `main` con cambios bajo `secrets/` dispara
+`.github/workflows/deploy-secrets.yml` en el runner autoalojado
+(`services/github-runner/`, `docs/DECISIONS.md`) -- build, lint, test,
+security_scan y despliegue en este mismo PC, sin intervención manual.
