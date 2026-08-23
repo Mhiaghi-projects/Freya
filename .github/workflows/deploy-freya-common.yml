@@ -64,5 +64,6 @@ jobs:
       - name: Security scan
         run: docker run --rm --env HOME=/tmp freya/freya-common:test pip-audit
 
-      - name: Desplegar
-        run: bash services/github-runner/deploy-service.sh freya-common
+      - name: Nada que desplegar
+        run: |
+          echo "freya-common no es un servicio HTTP (sin docker-compose.yml, sin etapa 'runtime' en su Dockerfile) -- es una dependencia de build que cada servicio copia e instala en su propia imagen. lint+test+security_scan ya corrieron arriba; no hay contenedor propio que reiniciar aquí."
