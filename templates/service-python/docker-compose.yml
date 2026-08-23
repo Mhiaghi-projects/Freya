@@ -1,0 +1,66 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f __SERVICE_NAME__/docker-compose.yml up -d
+
+services:
+  __SERVICE_NAME__:
+    build:
+      context: ..
+      dockerfile: __SERVICE_NAME__/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/__SERVICE_NAME__:dev
+    container_name: freya-__SERVICE_NAME__
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: __SERVICE_NAME__
+      FREYA_PORT: "__SERVICE_PORT__"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_GESTOR_DB_URL: "https://freya-gestor-db:8001"
+      FREYA_SECRETS_URL: "https://freya-secrets:8003"
+      FREYA_STORAGE_URL: "https://freya-storage:8004"
+      FREYA_API_KEY: "__SERVICE_NAME__"
+
+    volumes:
+      - ../infra/certs/__SERVICE_NAME__:/run/certs:ro
+      - ../infra/secrets/__SERVICE_NAME__:/run/secrets:ro
+
+    networks:
+      - freya-mesh
+
+    # Sin puertos publicados: sólo frontend habla con el exterior.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    labels:
+      freya.service: "__SERVICE_NAME__"
+      freya.metrics.port: "__SERVICE_PORT__"
+      freya.metrics.path: "/metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true

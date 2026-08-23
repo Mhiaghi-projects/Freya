@@ -1,0 +1,76 @@
+# dashboards — Grafana bajo perfil opcional (ROADMAP.md mon-07: "apagado por
+# defecto"). Vive en freya-mon para leer metrics/logs por su protocolo nativo,
+# igual que gestor-monitoring. No se levanta con "up dashboards" a secas:
+# Start-FreyaService añade --profile dashboards (ver FreyaServices.psm1) --
+# sin él, "docker compose up" ignora cualquier servicio con "profiles:".
+#
+#   .\freya.ps1 up dashboards
+#
+# No expuesta al host todavía (docs/ARCHITECTURE.md §3, tabla de servicios):
+# se alcanzará a través del gateway de frontend en la Fase 9. Hasta entonces,
+# para verla localmente durante desarrollo, publica el puerto a mano con un
+# override de compose -- no se hace aquí por defecto.
+
+services:
+  dashboards:
+    image: grafana/grafana:13.1.4
+    container_name: freya-dashboards
+    restart: unless-stopped
+    profiles:
+      - dashboards
+
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/admin_password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Sin plugins instalados en arranque: freya-mon es --internal (docs/
+      # ARCHITECTURE.md §4), Grafana no tiene salida a internet aquí -- un
+      # intento real de instalar victoriametrics-logs-datasource se probó
+      # en vivo y tumbaba el proceso entero al fallar la resolución DNS de
+      # grafana.com. Ver README, sección Pendiente.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+
+    volumes:
+      - freya-dashboards-data:/var/lib/grafana
+      - ../../infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../infra/secrets/dashboards:/run/secrets:ro
+
+    networks:
+      - freya-mon
+
+    # Sin puertos publicados por defecto (ver cabecera).
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.35"
+          memory: 220M
+
+    labels:
+      freya.service: "dashboards"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  freya-dashboards-data:
+    name: dashboards_freya-dashboards-data
+    external: true
+
+networks:
+  freya-mon:
+    external: true

@@ -1,0 +1,40 @@
+# Secretos y certificados: nunca al repositorio
+infra/certs/
+infra/secrets/
+*.key
+*.pem
+*.crt
+*.csr
+*.srl
+
+# Entorno
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Datos de contenedores
+data/
+volumes/
+infra/backups/
+
+# Editores y sistema
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

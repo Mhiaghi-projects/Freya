@@ -1,0 +1,95 @@
+# database — PostgreSQL 16, backend de persistencia de Freya.
+#
+# El único servicio que la alcanza es gestor-db, por la red privada freya-db.
+# Ningún otro contenedor tiene ruta de red hasta aquí. Ver docs/ARCHITECTURE.md.
+#   docker compose -f services/database/docker-compose.yml up -d
+
+services:
+  database:
+    image: postgres:16.15-alpine3.24
+    container_name: freya-database
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-freya}"
+      POSTGRES_USER: "${POSTGRES_USER:-freya}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+    # Afinado para memoria escasa (db-03): el objetivo es quedarse bajo 256 MB
+    # en reposo. max_connections bajo porque el único cliente es el pool de
+    # gestor-db, no una granja de servicios hablando directo a la base.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=192MB
+      - -c
+      - max_connections=40
+      - -c
+      - wal_buffers=4MB
+      - -c
+      - max_wal_size=512MB
+      - -c
+      - min_wal_size=64MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - log_min_duration_statement=250
+
+    volumes:
+      - freya-database-data:/var/lib/postgresql/data
+      - ../../infra/secrets/database:/run/secrets:ro
+
+    networks:
+      - freya-db
+
+    # Sin puertos publicados al host: sólo gestor-db la alcanza, por freya-db.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/run/postgresql:size=16m,mode=1777
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-freya} -d ${POSTGRES_DB:-freya}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    labels:
+      freya.service: "database"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  freya-database-data:
+    # Nombre fijo = el volumen real ya existente (creado bajo el nombre de
+    # proyecto de compose anterior a agrupar todo bajo "freya", ver
+    # infra/powershell/FreyaServices.psm1:Invoke-FreyaCompose) -- si esto
+    # apuntara a otro nombre, "up" crearia un volumen nuevo vacio y
+    # parecería que se perdieron los datos reales.
+    name: database_freya-database-data
+    external: true
+
+networks:
+  freya-db:
+    external: true

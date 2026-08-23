@@ -1,0 +1,56 @@
+id: gestor-db
+name: Gestor DB
+phase: 1
+difficulty: 4
+depends_on: [database]
+description: >
+  Única puerta a PostgreSQL. API HTTPS de consultas, transacciones, schemas y
+  migraciones, con aislamiento por tenant. Ningún otro servicio toca la base.
+
+tasks:
+  - id: gdb-01
+    title: Esqueleto del servicio desde la plantilla
+    difficulty: 1
+    acceptance: Arranca en contenedor, /health responde 200, logs en JSON.
+
+  - id: gdb-02
+    title: Pool de conexiones a PostgreSQL con asyncpg
+    difficulty: 3
+    depends_on: [gdb-01]
+    acceptance: Pool con tamaño configurable, reconexión ante caída de la base y /ready reflejando el estado real.
+
+  - id: gdb-03
+    title: Modo bootstrap con token estático
+    difficulty: 2
+    depends_on: [gdb-01]
+    acceptance: Con AUTH_ENABLED=false sólo se acepta el token de /run/secrets/bootstrap_token; todo lo demás es 401.
+
+  - id: gdb-04
+    title: Endpoints de query, execute y transacción
+    difficulty: 4
+    depends_on: [gdb-02]
+    acceptance: Consultas parametrizadas obligatorias, transacciones multi-sentencia con rollback, timeout por consulta.
+
+  - id: gdb-05
+    title: Resolución de schema por tenant
+    difficulty: 3
+    depends_on: [gdb-04]
+    acceptance: X-Freya-Tenant fija el search_path; una consulta de un tenant no alcanza datos de otro.
+
+  - id: gdb-06
+    title: Motor de migraciones SQL versionadas
+    difficulty: 4
+    depends_on: [gdb-05]
+    acceptance: Aplica migrations/NNNN_*.sql en orden, registra lo aplicado y es idempotente al reejecutar.
+
+  - id: gdb-07
+    title: Guardas contra inyección y consultas destructivas
+    difficulty: 4
+    depends_on: [gdb-04]
+    acceptance: Se rechaza SQL concatenado, DROP SCHEMA sin confirmación explícita y consultas sin límite de filas.
+
+  - id: gdb-08
+    title: RETORNO Fase 2 - validación JWT contra auth
+    difficulty: 3
+    depends_on: [gdb-03]
+    acceptance: Con AUTH_ENABLED=true se valida el JWT contra el JWKS cacheado y el token de bootstrap queda inválido.

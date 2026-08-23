@@ -1,0 +1,41 @@
+# Configuracion estatica de Traefik (docs/ROADMAP.md Fase 9): unica puerta
+# HTTPS al exterior de Freya. Termina TLS aqui: frontend deja de publicar
+# puerto propio y de servir HTTPS -- Traefik lo alcanza por freya-mesh en
+# HTTP plano, mismo principio que gestor-monitoring hablando HTTP con
+# metrics/logs (backends confiados dentro de una red docker aislada, sin
+# salida al exterior salvo por aqui).
+#
+# Enrutado por fichero estatico (providers.file), no por el proveedor
+# docker: probado en vivo y descartado -- el cliente Go de Traefik contra
+# el socket de Docker Desktop en Windows devuelve "400 Bad Request" sin
+# cuerpo en la negociacion inicial (confirmado con curl directo al mismo
+# socket: /version y /info responden 200 normal, así que el socket en sí
+# funciona; es el cliente Docker SDK de Traefik el que no lo tolera aquí -
+# variante conocida de Docker Desktop en Windows/WSL2). Con un solo backend
+# que enrutar hoy (frontend), el proveedor de fichero es first-class en
+# Traefik, no un rodeo -- ver services/traefik/dynamic/routes.yml.
+
+entryPoints:
+  websecure:
+    address: ":443"
+  # Solo para el healthcheck del propio contenedor (traefik healthcheck
+  # --ping) -- nunca se publica al host, no es una puerta de entrada.
+  traefik:
+    address: ":8080"
+
+ping:
+  entryPoint: traefik
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+# Sin dashboard/API propios expuestos: Traefik aqui es puro plano de datos,
+# no necesita superficie de administracion adicional.
+api:
+  dashboard: false
+  insecure: false
+
+log:
+  level: INFO

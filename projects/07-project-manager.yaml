@@ -1,0 +1,56 @@
+id: project-manager
+name: Project Manager (Jira)
+phase: 6
+difficulty: 3
+depends_on: [gestor-db, auth]
+description: >
+  Gestor de proyectos, tasks, Kanban, milestones y esfuerzo. Fuente de verdad
+  del backlog de Freya y de la que bebe gamification.
+
+tasks:
+  - id: pm-01
+    title: Esqueleto del servicio y schema freya_pm
+    difficulty: 2
+    acceptance: Tablas de proyectos, tasks, estados, etiquetas, milestones y asignaciones creadas.
+
+  - id: pm-02
+    title: CRUD de proyectos con dificultad
+    difficulty: 2
+    depends_on: [pm-01]
+    acceptance: Proyecto con dificultad 1-5, descripción, dependencias y fase.
+
+  - id: pm-03
+    title: CRUD de tasks con dificultad y dependencias
+    difficulty: 3
+    depends_on: [pm-02]
+    acceptance: Task con dificultad, criterio de aceptación y dependencias; una task bloqueada no puede pasar a en curso.
+
+  - id: pm-04
+    title: Tablero Kanban con estados configurables
+    difficulty: 3
+    depends_on: [pm-03]
+    acceptance: Columnas definibles por proyecto, transiciones válidas y orden persistente dentro de cada columna.
+
+  - id: pm-05
+    title: Milestones y seguimiento de progreso
+    difficulty: 2
+    depends_on: [pm-03]
+    acceptance: Progreso de un milestone calculado a partir de la dificultad de sus tasks, no de su número.
+
+  - id: pm-06
+    title: Esfuerzo estimado frente a real
+    difficulty: 3
+    depends_on: [pm-03]
+    acceptance: Registro de tiempo por task y desviación respecto a la estimación derivada de la dificultad.
+
+  - id: pm-07
+    title: Vínculo entre tasks y commits de git
+    difficulty: 3
+    depends_on: [pm-03]
+    acceptance: Un commit que menciona el identificador de una task queda enlazado y visible desde ella.
+
+  - id: pm-08
+    title: Cargar el backlog de projects/ como datos reales
+    difficulty: 3
+    depends_on: [pm-03]
+    acceptance: Los doce ficheros YAML se importan y el backlog de Freya pasa a gestionarse desde su propia API.

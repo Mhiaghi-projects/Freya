@@ -1,0 +1,61 @@
+# logs — VictoriaLogs, backend de logs de Freya.
+#
+# Sólo gestor-monitoring la alcanza, por la red privada freya-mon (--internal:
+# ver docs/ARCHITECTURE.md §4). Mismo principio que metrics/database: protocolo
+# nativo (HTTP propio de VictoriaLogs), sin TLS de Freya.
+#   docker compose -f services/logs/docker-compose.yml up -d
+
+services:
+  logs:
+    image: victoriametrics/victoria-logs:v1.52.0
+    container_name: freya-logs
+    restart: unless-stopped
+
+    command:
+      - "--storageDataPath=/storage"
+      # Mismo horizonte que metrics (ROADMAP.md mon-01, "retención acotada").
+      - "--retentionPeriod=30d"
+      - "--httpListenAddr=:9428"
+
+    volumes:
+      - freya-logs-data:/storage
+
+    networks:
+      - freya-mon
+
+    # Sin puertos publicados: sólo gestor-monitoring la alcanza, por freya-mon.
+
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+
+    # Sin healthcheck: a diferencia de la imagen de metrics, esta es un
+    # binario a secas sin shell ni wget (comprobado en vivo -- ni siquiera
+    # tiene /bin/sh), así que ningún CMD-SHELL puede correr aquí dentro.
+    # gestor-monitoring vigila el servicio igual, desde fuera.
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.35"
+          memory: 160M
+
+    labels:
+      freya.service: "logs"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  freya-logs-data:
+    name: logs_freya-logs-data
+    external: true
+
+networks:
+  freya-mon:
+    external: true

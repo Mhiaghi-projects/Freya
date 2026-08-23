@@ -1,0 +1,17 @@
+# Enrutado estatico -- ver traefik.yml para el porque de no usar el
+# proveedor docker. Anadir un backend nuevo aqui es una linea de router +
+# una de service, no un cambio de arquitectura.
+http:
+  routers:
+    frontend:
+      rule: "PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      tls: {}
+      service: frontend
+
+  services:
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://freya-frontend:8000"

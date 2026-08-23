@@ -1,0 +1,57 @@
+id: git
+name: Git (Gerrit)
+phase: 5
+difficulty: 5
+depends_on: [storage, auth, gestor-db]
+description: >
+  Control de versiones de Freya. Conserva los 5 commits más recientes en local y
+  empuja el resto a GitHub. A diferencia de GitHub, admite ficheros sensibles
+  hasta que secrets los absorba.
+
+tasks:
+  - id: git-01
+    title: Esqueleto del servicio y schema freya_git
+    difficulty: 2
+    acceptance: Tablas de repositorios, refs, commits y espejos de GitHub creadas.
+
+  - id: git-02
+    title: Almacén de repositorios sobre storage
+    difficulty: 5
+    depends_on: [git-01]
+    acceptance: Los objetos y packfiles viven en storage; el contenedor no guarda estado propio y se puede recrear.
+
+  - id: git-03
+    title: Protocolo Git smart HTTP
+    difficulty: 5
+    depends_on: [git-02]
+    acceptance: git clone, fetch y push funcionan desde un cliente Git estándar contra la URL del servicio.
+
+  - id: git-04
+    title: API de lectura de repositorio
+    difficulty: 3
+    depends_on: [git-02]
+    acceptance: Branches, tags, historial, diff entre refs y árbol de ficheros expuestos por HTTPS.
+
+  - id: git-05
+    title: Política de retención de 5 commits
+    difficulty: 5
+    depends_on: [git-03]
+    acceptance: Al llegar el sexto commit, el más antiguo se empuja a GitHub y en local queda sólo su referencia; el historial sigue siendo navegable.
+
+  - id: git-06
+    title: Sincronización bidireccional con GitHub
+    difficulty: 5
+    depends_on: [git-05]
+    acceptance: Cambios en GitHub se reflejan en Freya y viceversa; los conflictos se detectan y se reportan sin perder datos.
+
+  - id: git-07
+    title: Marcado de repositorios sensibles
+    difficulty: 3
+    depends_on: [git-05]
+    acceptance: Un repo marcado como sensible nunca se empuja a GitHub, aunque supere los 5 commits.
+
+  - id: git-08
+    title: Permisos por repositorio y webhooks
+    difficulty: 4
+    depends_on: [git-04]
+    acceptance: Los scopes de auth gobiernan lectura, escritura y administración; los eventos de push emiten webhook firmado.

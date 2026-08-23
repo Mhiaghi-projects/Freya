@@ -1,0 +1,48 @@
+# github-runner — runner autoalojado de GitHub Actions para "deploy en mi
+# propio PC" (docs/DECISIONS.md). No necesita freya-mesh: sólo internet
+# (para hablar con github.com) y acceso al host (docker.sock + el propio
+# checkout de Freya) para desplegar en el sitio.
+#
+#   .\freya.ps1 up github-runner
+#
+# Antes de levantarlo: generar un token de registro en GitHub (repo/org
+# → Settings → Actions → Runners → New self-hosted runner, o
+# `gh api ... /actions/runners/registration-token`) y ponerlo en
+# infra/secrets/github-runner/ -- ver README de esta carpeta.
+
+services:
+  github-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: freya/github-runner:dev
+    container_name: freya-github-runner
+    restart: unless-stopped
+
+    environment:
+      RUNNER_URL: "${GITHUB_RUNNER_URL:?define GITHUB_RUNNER_URL en .env}"
+      RUNNER_PAT_FILE: /run/secrets/github_pat
+      RUNNER_NAME: "${GITHUB_RUNNER_NAME:-freya-local}"
+      RUNNER_LABELS: "${GITHUB_RUNNER_LABELS:-self-hosted,freya}"
+
+    volumes:
+      # El propio monorepo, en el mismo sitio que freya.ps1 espera --
+      # "deploy" es git pull aquí + docker compose, no un checkout aislado.
+      - ../..:/workspace
+      # Docker-outside-of-Docker: habla con el Docker Desktop del host.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../../infra/secrets/github-runner:/run/secrets:ro
+
+    working_dir: /workspace
+
+    # Sin límites de recursos estrictos: aquí corren builds de Docker
+    # (docker compose build), que necesitan CPU/memoria de verdad.
+
+    labels:
+      freya.service: "github-runner"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

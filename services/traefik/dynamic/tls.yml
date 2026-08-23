@@ -1,0 +1,10 @@
+# Certificado por defecto del entrypoint websecure: el mismo patron de CA
+# interna que usa cada servicio de Freya (infra/certs/traefik, emitido por
+# secrets -- ver .\freya.ps1 renew-cert traefik). Autofirmado: el navegador
+# avisa la primera vez, igual que con cualquier otro servicio de esta
+# plataforma hasta que se importe infra/certs/ca/ca.crt en su almacen de
+# confianza.
+tls:
+  certificates:
+    - certFile: /certs/traefik/tls.crt
+      keyFile: /certs/traefik/tls.key

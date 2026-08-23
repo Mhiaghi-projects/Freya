@@ -1,0 +1,20 @@
+# Fuentes de datos pre-provisionadas de Grafana (ROADMAP.md mon-07: "con las
+# fuentes ya configuradas"). Grafana vive en freya-mon, igual que metrics y
+# logs -- accede por su nombre de contenedor, protocolo nativo, sin TLS.
+#
+# Sólo VictoriaMetrics: usa el tipo "prometheus" incorporado, sin plugin.
+# VictoriaLogs necesitaría el plugin victoriametrics-logs-datasource, que
+# sólo se puede instalar con salida a internet -- freya-mon es --internal
+# (docs/ARCHITECTURE.md §4), así que no hay forma de instalarlo en arranque
+# (se probó: tumbaba el proceso entero al fallar la resolución DNS de
+# grafana.com). Ver README de dashboards, sección Pendiente.
+
+apiVersion: 1
+
+datasources:
+  - name: VictoriaMetrics
+    type: prometheus
+    access: proxy
+    url: http://freya-metrics:8428
+    isDefault: true
+    editable: false

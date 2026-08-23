@@ -1,0 +1,64 @@
+# traefik — unica puerta HTTPS al exterior de Freya (docs/ROADMAP.md Fase 9).
+# Sustituye a frontend en ese papel: frontend deja de publicar puerto propio
+# y de terminar TLS, se queda solo con la GUI y las API que el exterior usa
+# a traves de este proxy. El enrutado es estatico (services/traefik/dynamic/
+# routes.yml), no por descubrimiento via docker.sock -- ver traefik.yml
+# para el porque.
+#
+#   .\freya.ps1 up traefik
+
+services:
+  traefik:
+    image: traefik:v3.5
+    container_name: freya-traefik
+    restart: unless-stopped
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - ../../infra/certs/traefik:/certs/traefik:ro
+
+    networks:
+      - freya-mesh
+      - freya-edge
+
+    # Unico puerto publicado al host de toda la plataforma.
+    ports:
+      - "8000:443"
+
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.35"
+          memory: 128M
+
+    labels:
+      freya.service: "traefik"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true
+  freya-edge:
+    external: true

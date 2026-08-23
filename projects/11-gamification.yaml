@@ -1,0 +1,63 @@
+id: gamification
+name: Gamification
+phase: 10
+difficulty: 3
+depends_on: [project-manager, gestor-db, auth]
+description: >
+  XP, niveles, monedas, metas, recompensas, rachas, achievements, leaderboard,
+  hábitos y vitrina de proyectos. Se alimenta de la dificultad de las tasks de
+  project-manager.
+
+tasks:
+  - id: gam-01
+    title: Esqueleto del servicio y schema freya_gamification
+    difficulty: 2
+    acceptance: Tablas de perfiles, XP, monedas, rachas, achievements, hábitos y metas creadas.
+
+  - id: gam-02
+    title: Motor de XP y niveles desde la dificultad
+    difficulty: 3
+    depends_on: [gam-01]
+    acceptance: Cerrar una task otorga la XP de su dificultad; la curva de niveles es configurable y el nivel se recalcula al instante.
+
+  - id: gam-03
+    title: Consumo de eventos de project-manager
+    difficulty: 3
+    depends_on: [gam-02]
+    acceptance: Los eventos de cierre y reapertura de task se procesan una sola vez, aunque lleguen duplicados.
+
+  - id: gam-04
+    title: Tareas diarias, semanales, mensuales y anuales
+    difficulty: 4
+    depends_on: [gam-02]
+    acceptance: Generación automática por periodo, con caducidad y recompensa proporcional al periodo.
+
+  - id: gam-05
+    title: Rachas y achievements
+    difficulty: 3
+    depends_on: [gam-04]
+    acceptance: La racha se rompe al saltar un día; los achievements se conceden una vez y son irrevocables.
+
+  - id: gam-06
+    title: Monedas, metas y recompensas
+    difficulty: 3
+    depends_on: [gam-02]
+    acceptance: Las monedas se ganan y se gastan con saldo consistente; una meta cumplida libera su recompensa.
+
+  - id: gam-07
+    title: Habit Tracker
+    difficulty: 3
+    depends_on: [gam-05]
+    acceptance: Hábitos con frecuencia propia, registro diario e historial visible por periodo.
+
+  - id: gam-08
+    title: Expense Rewards
+    difficulty: 3
+    depends_on: [gam-06]
+    acceptance: Registro de gastos que convierte comportamiento de ahorro en monedas según reglas configurables.
+
+  - id: gam-09
+    title: Leaderboard y Project Showcase
+    difficulty: 3
+    depends_on: [gam-02]
+    acceptance: Ranking por periodo con desempates estables, y vitrina de proyectos alimentada desde project-manager.

@@ -1,0 +1,57 @@
+id: storage
+name: Storage (Swift)
+phase: 4
+difficulty: 4
+depends_on: [gestor-db, auth]
+description: >
+  Almacenamiento de archivos y objetos. Cada servicio de Freya tiene su carpeta;
+  cada proyecto externo, la suya. Desarrollo propio: MinIO no cabe en el
+  presupuesto de memoria.
+
+tasks:
+  - id: sto-01
+    title: Esqueleto del servicio y schema freya_storage
+    difficulty: 2
+    acceptance: Tablas de buckets, objetos, versiones y cuotas creadas.
+
+  - id: sto-02
+    title: Modelo tenant/bucket/key sobre volumen
+    difficulty: 3
+    depends_on: [sto-01]
+    acceptance: Metadatos en base, bytes en disco con sharding por prefijo de hash; sin colisiones de nombre entre tenants.
+
+  - id: sto-03
+    title: Operaciones PUT, GET, DELETE y HEAD
+    difficulty: 3
+    depends_on: [sto-02]
+    acceptance: Subida y descarga por streaming sin cargar el fichero entero en memoria; checksum SHA-256 verificado.
+
+  - id: sto-04
+    title: Listado con cursor y prefijos
+    difficulty: 3
+    depends_on: [sto-02]
+    acceptance: Listado paginado por cursor con filtro de prefijo y delimitador estilo carpeta.
+
+  - id: sto-05
+    title: Multipart upload
+    difficulty: 4
+    depends_on: [sto-03]
+    acceptance: Un fichero de 2 GB sube en partes, se puede reanudar y se ensambla con checksum correcto.
+
+  - id: sto-06
+    title: Cuotas y control de acceso por tenant
+    difficulty: 3
+    depends_on: [sto-03]
+    acceptance: Superar la cuota devuelve 507; los scopes de auth deciden lectura y escritura por bucket.
+
+  - id: sto-07
+    title: Espacio reservado de Freya
+    difficulty: 2
+    depends_on: [sto-06]
+    acceptance: /freya/{servicio}/ sólo es escribible por la service account de ese servicio.
+
+  - id: sto-08
+    title: URLs prefirmadas de vida corta
+    difficulty: 4
+    depends_on: [sto-06]
+    acceptance: Una URL firmada permite descargar sin token durante N minutos y caduca de forma verificable.

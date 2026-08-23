@@ -1,0 +1,63 @@
+id: frontend
+name: Frontend (Horizon)
+phase: 9
+difficulty: 4
+depends_on: [auth, project-manager, git, storage, cicd, gestor-monitoring]
+description: >
+  Interfaz web unificada y única puerta al exterior. También actúa como gateway
+  HTTP para que proyectos externos consuman los servicios de Freya. Incluye
+  Service Catalog y Developer Portal.
+
+tasks:
+  - id: fe-01
+    title: Gateway HTTPS con enrutado a servicios
+    difficulty: 4
+    acceptance: Es el único contenedor en freya-edge; enruta al servicio destino validando el token y propagando X-Request-Id.
+
+  - id: fe-02
+    title: Rate limiting y CORS por tenant
+    difficulty: 3
+    depends_on: [fe-01]
+    acceptance: Límites configurables por tenant que devuelven 429 con Retry-After; orígenes permitidos por tenant.
+
+  - id: fe-03
+    title: Esqueleto de la UI y sesión contra auth
+    difficulty: 3
+    depends_on: [fe-01]
+    acceptance: Login, renovación silenciosa del token y logout; la sesión sobrevive a recargar la página.
+
+  - id: fe-04
+    title: Dashboard y navegación entre servicios
+    difficulty: 3
+    depends_on: [fe-03]
+    acceptance: Vista principal con estado de los servicios y acceso a cada área.
+
+  - id: fe-05
+    title: Service Catalog
+    difficulty: 3
+    depends_on: [fe-04]
+    acceptance: Inventario vivo de servicios con versión, salud, dependencias y descriptor de API, obtenido en tiempo real.
+
+  - id: fe-06
+    title: Developer Portal con consola de pruebas
+    difficulty: 4
+    depends_on: [fe-05]
+    acceptance: Documentación desde los OpenAPI de cada servicio y consola para lanzar peticiones autenticadas.
+
+  - id: fe-07
+    title: Vistas de git y storage
+    difficulty: 4
+    depends_on: [fe-04]
+    acceptance: Explorador de repositorios con historial y diff, y navegador de buckets con subida y descarga.
+
+  - id: fe-08
+    title: Vistas de cicd y monitoring
+    difficulty: 3
+    depends_on: [fe-04]
+    acceptance: Ejecuciones de pipeline con logs en vivo y paneles de Cloud Health con métricas reales.
+
+  - id: fe-09
+    title: Vista de project-manager
+    difficulty: 3
+    depends_on: [fe-04]
+    acceptance: Tablero Kanban arrastrable, backlog y milestones operativos desde el navegador.

@@ -1,0 +1,56 @@
+id: cicd
+name: CI/CD (Zuul)
+phase: 8
+difficulty: 5
+depends_on: [git, storage, secrets, auth]
+description: >
+  Pipelines, tests, lint, builds, deployments, rollback y automatización de
+  dependencias. Incluye Deployment Manager y Dependency Updater.
+
+tasks:
+  - id: ci-01
+    title: Esqueleto del servicio y schema freya_cicd
+    difficulty: 2
+    acceptance: Tablas de pipelines, ejecuciones, jobs, artefactos y despliegues creadas.
+
+  - id: ci-02
+    title: Formato declarativo de pipeline en YAML
+    difficulty: 3
+    depends_on: [ci-01]
+    acceptance: .freya/pipeline.yaml en el repositorio define stages, jobs, matriz y condiciones; se valida antes de ejecutar.
+
+  - id: ci-03
+    title: Runner de contenedores efímeros
+    difficulty: 5
+    depends_on: [ci-02]
+    acceptance: Cada job corre en un contenedor aislado con límites de CPU y memoria, se destruye al terminar y no deja residuos.
+
+  - id: ci-04
+    title: Disparadores por push, cron y manual
+    difficulty: 3
+    depends_on: [ci-03]
+    acceptance: Un push a git dispara el pipeline vía webhook firmado; también se puede programar o lanzar a mano.
+
+  - id: ci-05
+    title: Artefactos y logs de ejecución
+    difficulty: 3
+    depends_on: [ci-03]
+    acceptance: Los artefactos van a storage con retención configurable; los logs se transmiten en vivo y quedan consultables.
+
+  - id: ci-06
+    title: Deployment Manager con rollback
+    difficulty: 5
+    depends_on: [ci-05]
+    acceptance: Despliega un servicio de Freya, verifica /ready y revierte solo a la versión anterior si falla.
+
+  - id: ci-07
+    title: Dependency Updater
+    difficulty: 4
+    depends_on: [ci-04]
+    acceptance: Revisa dependencias periódicamente, abre tasks en project-manager y propone la rama con la actualización.
+
+  - id: ci-08
+    title: Credenciales de despliegue desde secrets
+    difficulty: 3
+    depends_on: [ci-06]
+    acceptance: Ningún secreto en el YAML del pipeline; se referencian por nombre y se inyectan en el job sin aparecer en logs.

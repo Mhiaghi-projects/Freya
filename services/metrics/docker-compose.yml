@@ -1,0 +1,66 @@
+# metrics — VictoriaMetrics single-node, backend de métricas de Freya.
+#
+# Sólo gestor-monitoring la alcanza, por la red privada freya-mon (--internal:
+# ver docs/ARCHITECTURE.md §4). Nadie más tiene ruta hasta aquí, ni siquiera
+# freya-mesh. Protocolo nativo (HTTP propio de VictoriaMetrics), sin TLS de
+# Freya -- mismo principio que gestor-db hablando Postgres con database.
+#   docker compose -f services/metrics/docker-compose.yml up -d
+
+services:
+  metrics:
+    image: victoriametrics/victoria-metrics:v1.150.0
+    container_name: freya-metrics
+    restart: unless-stopped
+
+    command:
+      - "--storageDataPath=/storage"
+      # Retención acotada (ROADMAP.md mon-01): mismo horizonte que el job
+      # de limpieza previsto en el contrato (§13, monitoring_metrics_cleanup,
+      # "purgar métricas > 30 días").
+      - "--retentionPeriod=30d"
+      - "--httpListenAddr=:8428"
+
+    volumes:
+      - freya-metrics-data:/storage
+
+    networks:
+      - freya-mon
+
+    # Sin puertos publicados: sólo gestor-monitoring la alcanza, por freya-mon.
+
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8428/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.35"
+          memory: 160M
+
+    labels:
+      freya.service: "metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  freya-metrics-data:
+    name: metrics_freya-metrics-data
+    external: true
+
+networks:
+  freya-mon:
+    external: true

@@ -1,0 +1,24 @@
+# El contexto de build es la raíz del repo (context: ..) para poder
+# copiar freya-common (su propio proyecto hermano, ver docs/ARCHITECTURE.md
+# §2.1). Sin esto, secretos, certificados y volcados se envían enteros al
+# daemon de Docker en cada build, aunque ningún Dockerfile los copie a una
+# imagen.
+
+infra/secrets/
+infra/certs/
+infra/backups/
+.env
+.env.*
+!.env.example
+
+.git/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+**/*.egg-info/
+
+.vscode/
+.idea/

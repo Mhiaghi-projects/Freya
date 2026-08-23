@@ -1,0 +1,51 @@
+id: gestor-monitoring
+name: Gestor Monitoring (Prometheus/Grafana)
+phase: 7
+difficulty: 3
+depends_on: [auth]
+description: >
+  Métricas, logs, health checks, dashboards y alertas. Controla los contenedores
+  metrics (VictoriaMetrics) y logs (VictoriaLogs) en la red privada freya-mon.
+  Incluye Cloud Health.
+
+tasks:
+  - id: mon-01
+    title: Contenedores metrics y logs en red privada
+    difficulty: 2
+    acceptance: VictoriaMetrics y VictoriaLogs arrancan con retención acotada y no son alcanzables desde freya-mesh.
+
+  - id: mon-02
+    title: Esqueleto del gestor y descubrimiento de targets
+    difficulty: 3
+    depends_on: [mon-01]
+    acceptance: Descubre contenedores por la etiqueta freya.service y ajusta la lista de scrape sin reinicio.
+
+  - id: mon-03
+    title: Scrape de métricas y escritura en VictoriaMetrics
+    difficulty: 3
+    depends_on: [mon-02]
+    acceptance: Las métricas de los 10 servicios se recogen a intervalo configurable y son consultables por PromQL.
+
+  - id: mon-04
+    title: Recolección de logs desde stdout de contenedores
+    difficulty: 4
+    depends_on: [mon-01]
+    acceptance: Los logs JSON llegan a VictoriaLogs y se pueden filtrar por servicio, tenant y request_id.
+
+  - id: mon-05
+    title: Cloud Health
+    difficulty: 3
+    depends_on: [mon-03]
+    acceptance: Consulta /ready de cada servicio y expone un estado agregado con historial de disponibilidad.
+
+  - id: mon-06
+    title: Reglas de alerta y notificaciones
+    difficulty: 4
+    depends_on: [mon-03, mon-05]
+    acceptance: Alertas por servicio caído, latencia y memoria; con supresión de duplicados y resolución automática.
+
+  - id: mon-07
+    title: Grafana bajo perfil opcional
+    difficulty: 2
+    depends_on: [mon-03]
+    acceptance: docker compose --profile dashboards levanta Grafana con las fuentes ya configuradas; apagado por defecto.

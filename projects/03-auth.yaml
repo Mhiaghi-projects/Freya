@@ -1,0 +1,62 @@
+id: auth
+name: Auth (Keystone)
+phase: 2
+difficulty: 5
+depends_on: [gestor-db]
+description: >
+  Identidad de Freya. Usuarios, roles, permisos, tenants y service accounts.
+  Los propios servicios se identifican aquí para hablar entre ellos.
+
+tasks:
+  - id: auth-01
+    title: Esqueleto del servicio y schema freya_auth
+    difficulty: 2
+    acceptance: Migraciones de usuarios, roles, permisos, tenants y service accounts aplicadas vía gestor-db.
+
+  - id: auth-02
+    title: Modelo de tenants con aislamiento estricto
+    difficulty: 4
+    depends_on: [auth-01]
+    acceptance: Un token del tenant A es rechazado por cualquier recurso del tenant B, incluso con el mismo identificador de usuario.
+
+  - id: auth-03
+    title: Firma EdDSA y publicación de JWKS
+    difficulty: 4
+    depends_on: [auth-01]
+    acceptance: Claves Ed25519 generadas y rotables; /api/v1/.well-known/jwks.json sirve la parte pública con kid.
+
+  - id: auth-04
+    title: Flujo client_credentials para servicios
+    difficulty: 3
+    depends_on: [auth-03]
+    acceptance: Un servicio obtiene un JWT de 5 minutos con client_id y client_secret y lo renueva solo.
+
+  - id: auth-05
+    title: Login de usuario con Argon2id y refresh rotativo
+    difficulty: 4
+    depends_on: [auth-03]
+    acceptance: Access de 15 min, refresh de 30 días hasheado en base; reusar un refresh consumido revoca la familia entera.
+
+  - id: auth-06
+    title: Motor de roles, permisos y scopes
+    difficulty: 4
+    depends_on: [auth-02]
+    acceptance: Scopes servicio:recurso:acción resueltos desde roles; el comodín sólo para administración de plataforma.
+
+  - id: auth-07
+    title: Introspección y revocación de tokens
+    difficulty: 3
+    depends_on: [auth-04, auth-05]
+    acceptance: Un token revocado deja de servir en menos de 60 s en todos los servicios pese al cacheo del JWKS.
+
+  - id: auth-08
+    title: Auditoría de eventos de identidad
+    difficulty: 2
+    depends_on: [auth-05]
+    acceptance: Login, fallo, revocación y cambio de rol quedan registrados con actor, tenant e IP.
+
+  - id: auth-09
+    title: Provisionar service accounts de los 10 servicios
+    difficulty: 2
+    depends_on: [auth-04]
+    acceptance: Cada servicio de Freya tiene su cuenta con los scopes mínimos que necesita, y ni uno más.

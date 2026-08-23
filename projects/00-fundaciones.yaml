@@ -1,0 +1,53 @@
+id: fundaciones
+name: Fundaciones
+phase: 0
+difficulty: 3
+depends_on: []
+description: >
+  Terreno común: arquitectura, convenciones, monorepo, plantilla de servicio y
+  red Docker. Sin esto cada servicio inventaría sus propias reglas.
+
+tasks:
+  - id: fnd-01
+    title: Documentar arquitectura, redes y asignación de puertos
+    difficulty: 3
+    acceptance: docs/ARCHITECTURE.md cubre los 14 contenedores, 4 redes y las razones de cada elección tecnológica.
+
+  - id: fnd-02
+    title: Fijar convenciones de API, errores, logs y contenedores
+    difficulty: 3
+    acceptance: docs/CONVENTIONS.md define formato de error, cabeceras, paginación, scopes y definición de terminado.
+
+  - id: fnd-03
+    title: Escribir el roadmap por fases con retornos explícitos
+    difficulty: 2
+    acceptance: docs/ROADMAP.md tiene criterio de salida por fase y tabla de retornos.
+
+  - id: fnd-04
+    title: Crear la plantilla de servicio Python reutilizable
+    difficulty: 3
+    acceptance: templates/service-python arranca en contenedor y responde /health y /ready sin modificaciones.
+
+  - id: fnd-05
+    title: Control de la plataforma desde PowerShell
+    difficulty: 3
+    acceptance: >
+      freya.ps1 crea redes, emite certificados, genera servicios y levanta o para
+      contenedores por nombre o por fase, con Docker Desktop como unico requisito
+      del host. Sin WSL, sin Python ni openssl instalados en Windows.
+
+  - id: fnd-06
+    title: Contenedor toolbox para las tareas Unix
+    difficulty: 2
+    depends_on: [fnd-05]
+    acceptance: >
+      Imagen Alpine con bash, openssl y python que ejecuta gen_dev_ca.sh,
+      new_service.sh y backlog_stats.py con el repositorio montado en /workspace.
+
+  - id: fnd-07
+    title: Diagnostico del entorno y normalizacion de finales de linea
+    difficulty: 2
+    depends_on: [fnd-06]
+    acceptance: >
+      freya.ps1 doctor detecta Docker parado, modo Windows containers, redes o
+      certificados ausentes y scripts .sh con CRLF; freya.ps1 fix-eol los corrige.

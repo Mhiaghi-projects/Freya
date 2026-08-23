@@ -1,0 +1,58 @@
+# Plantilla de workflow de GitHub Actions para un servicio de Freya.
+# Copiar a <servicio>/.github/workflows/deploy.yml y sustituir
+# storage (mismo mecanismo de plantilla que
+# templates/service-python/, ver infra/scripts/new_service.sh).
+#
+# No usa actions/checkout: el runner autoalojado (services/github-runner/)
+# tiene el propio monorepo montado en /workspace, en el mismo sitio que
+# usa freya.ps1 -- "desplegar" es actualizar ESE checkout con git y
+# reconstruir, no aislar uno nuevo (ver docs/DECISIONS.md, este mismo
+# repo trae freya-common como dependencia de build vía context: ".."
+# -- un checkout aislado de un solo repo no tendría ese hermano al lado).
+#
+# Reproduce a mano los mismos pasos que .freya/pipeline.yaml declaraba
+# para el viejo cicd (docs/ROADMAP.md ci-02): lint, test, security_scan.
+# Si storage/.freya/pipeline.yaml pide una lista distinta,
+# edita los pasos de este fichero a mano -- no hay nada que lo lea
+# dinámicamente aquí, a diferencia del cicd que se retira.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, freya]
+    defaults:
+      run:
+        working-directory: /workspace
+
+    steps:
+      - name: Actualizar el checkout local
+        run: |
+          cd storage
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Construir imagen de test
+        run: |
+          docker build --quiet --target dev \
+            --tag freya/storage:test \
+            --file storage/Dockerfile .
+
+      - name: Lint
+        run: docker run --rm --network none freya/storage:test ruff check /srv/app
+
+      - name: Test
+        run: docker run --rm --network none freya/storage:test pytest -v /srv/tests
+
+      - name: Security scan
+        run: docker run --rm --env HOME=/tmp freya/storage:test pip-audit
+
+      - name: Desplegar
+        run: |
+          docker compose --project-name freya \
+            -f storage/docker-compose.yml --env-file .env \
+            up -d --build

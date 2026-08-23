@@ -1,0 +1,29 @@
+id: database
+name: Database (PostgreSQL)
+phase: 1
+difficulty: 2
+depends_on: []
+description: >
+  PostgreSQL 16-alpine. Persistencia de toda Freya y de los tenants externos.
+  Sólo alcanzable por gestor-db a través de la red privada freya-db.
+
+tasks:
+  - id: db-01
+    title: Contenedor PostgreSQL 16-alpine con volumen persistente
+    difficulty: 2
+    acceptance: El contenedor arranca, el dato sobrevive a un docker compose down y no publica puerto al host.
+
+  - id: db-02
+    title: Aislar en la red privada freya-db
+    difficulty: 2
+    acceptance: Un contenedor de la red freya-mesh no puede abrir conexión al 5432; gestor-db sí.
+
+  - id: db-03
+    title: Afinar postgresql.conf para memoria escasa
+    difficulty: 3
+    acceptance: shared_buffers, work_mem y max_connections ajustados; el contenedor se mantiene bajo 256 MB en reposo.
+
+  - id: db-04
+    title: Script de backup y restauración verificada
+    difficulty: 3
+    acceptance: pg_dump programado escribe el volcado y una restauración de prueba lo recupera completo.
