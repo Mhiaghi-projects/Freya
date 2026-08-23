@@ -1,0 +1,73 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f git/docker-compose.yml up -d
+
+services:
+  git:
+    build:
+      context: ..
+      dockerfile: git/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/git:dev
+    container_name: freya-git
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: git
+      FREYA_PORT: "8005"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_GESTOR_DB_URL: "https://freya-gestor-db:8001"
+      FREYA_SECRETS_URL: "https://freya-secrets:8003"
+      FREYA_STORAGE_URL: "https://freya-storage:8004"
+      FREYA_CICD_URL: "https://freya-cicd:8007"
+      FREYA_API_KEY: "git"
+
+    volumes:
+      - ../infra/certs/git:/run/certs:ro
+      - ../infra/secrets/git:/run/secrets:ro
+      - freya-git-scratch:/scratch
+
+    networks:
+      - freya-mesh
+
+    # Sin puertos publicados: sólo frontend habla con el exterior.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    labels:
+      freya.service: "git"
+      freya.metrics.port: "8005"
+      freya.metrics.path: "/metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  freya-git-scratch:
+    name: git_freya-git-scratch
+    external: true
+
+networks:
+  freya-mesh:
+    external: true

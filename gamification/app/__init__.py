@@ -1,0 +1,1 @@
+"""Servicio gamification de Freya."""

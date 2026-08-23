@@ -1,0 +1,74 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f gamification/docker-compose.yml up -d
+
+services:
+  gamification:
+    build:
+      context: ..
+      dockerfile: gamification/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/gamification:dev
+    container_name: freya-gamification
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: gamification
+      FREYA_PORT: "8009"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_GESTOR_DB_URL: "https://freya-gestor-db:8001"
+      FREYA_PROJECT_MANAGER_URL: "https://freya-project-manager:8006"
+      FREYA_API_KEY: "gamification"
+      # Migración a GitHub Issues (docs/DECISIONS.md) -- apagado hasta que
+      # infra/secrets/gamification/github_pat exista y estas tres variables
+      # tengan valores reales. Ver infra/secrets/github-runner/README.md
+      # para el PAT (mismo token sirve para los dos).
+      FREYA_USE_GITHUB_TASK_SYNC: "${GITHUB_TASK_SYNC:-false}"
+      FREYA_GITHUB_OWNER: "${GITHUB_OWNER:-}"
+      FREYA_GITHUB_REPOS: "${GITHUB_GAMIFICATION_REPOS:-}"
+      FREYA_GITHUB_DEFAULT_USER_ID: "${GITHUB_DEFAULT_USER_ID:-}"
+
+    volumes:
+      - ../infra/certs/gamification:/run/certs:ro
+      - ../infra/secrets/gamification:/run/secrets:ro
+
+    networks:
+      - freya-mesh
+
+    # Sin puertos publicados: sólo por freya-mesh, como el resto de la
+    # malla -- Traefik (services/traefik/) es la única puerta al exterior.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    labels:
+      freya.service: "gamification"
+      freya.metrics.port: "8009"
+      freya.metrics.path: "/metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true

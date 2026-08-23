@@ -1,0 +1,77 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f frontend/docker-compose.yml up -d
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/frontend:dev
+    container_name: freya-frontend
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: frontend
+      FREYA_PORT: "8000"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_STORAGE_URL: "https://freya-storage:8004"
+      FREYA_GIT_URL: "https://freya-git:8005"
+      FREYA_PROJECT_MANAGER_URL: "https://freya-project-manager:8006"
+      FREYA_CICD_URL: "https://freya-cicd:8007"
+      FREYA_GESTOR_MONITORING_URL: "https://freya-gestor-monitoring:8008"
+      FREYA_GAMIFICATION_URL: "https://freya-gamification:8009"
+
+    volumes:
+      # Sólo ca.crt hace falta ya (confiar en la CA interna al llamar a
+      # auth/storage/git/...): tls.crt/tls.key quedaron sin uso al dejar de
+      # servir HTTPS propio, ver Dockerfile y services/traefik/README.md.
+      - ../infra/certs/frontend:/run/certs:ro
+
+    networks:
+      - freya-mesh
+
+    # Sin puertos publicados: Traefik es ahora la única puerta al exterior
+    # (services/traefik/), frontend se alcanza sólo por freya-mesh. El
+    # enrutado hacia aquí es estático (services/traefik/dynamic/routes.yml),
+    # no por labels -- ver traefik.yml para el porqué.
+    labels:
+      freya.service: "frontend"
+      freya.metrics.port: "8000"
+      freya.metrics.path: "/metrics"
+      # gestor-monitoring probaba /ready y /metrics por HTTPS para todo el
+      # mundo -- desde que este servicio no sirve TLS propio (ver arriba),
+      # aparecía "down" aunque estuviera sano. Ver docker_client.py/
+      # health_monitor.py/scraper.py en gestor-monitoring.
+      freya.health.scheme: "http"
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true

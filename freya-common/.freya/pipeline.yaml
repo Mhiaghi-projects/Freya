@@ -1,0 +1,8 @@
+# Pasos del pipeline de freya-common. build_artifact publica un wheel
+# real en storage (bucket "artifacts") -- el primer uso real de
+# ci_artifacts, ver cicd/README.md.
+steps:
+  - lint
+  - test
+  - security_scan
+  - build_artifact

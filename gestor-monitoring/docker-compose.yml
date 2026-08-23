@@ -1,0 +1,86 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f gestor-monitoring/docker-compose.yml up -d
+
+services:
+  gestor-monitoring:
+    build:
+      context: ..
+      dockerfile: gestor-monitoring/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/gestor-monitoring:dev
+    container_name: freya-gestor-monitoring
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: gestor-monitoring
+      FREYA_PORT: "8008"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_GESTOR_DB_URL: "https://freya-gestor-db:8001"
+      FREYA_SECRETS_URL: "https://freya-secrets:8003"
+      FREYA_STORAGE_URL: "https://freya-storage:8004"
+      FREYA_API_KEY: "gestor-monitoring"
+      # Backends nativos en freya-mon, sin TLS (mismo principio que gestor-db
+      # hablando Postgres con database).
+      FREYA_METRICS_URL: "http://freya-metrics:8428"
+      FREYA_LOGS_URL: "http://freya-logs:9428"
+      FREYA_DOCKER_SOCKET: "/var/run/docker.sock"
+      FREYA_SCRAPE_INTERVAL_SECONDS: "${FREYA_SCRAPE_INTERVAL_SECONDS:-30}"
+
+    volumes:
+      - ../infra/certs/gestor-monitoring:/run/certs:ro
+      - ../infra/secrets/gestor-monitoring:/run/secrets:ro
+      # Única excepción documentada a "nada toca Docker salvo freya.ps1"
+      # (docs/ARCHITECTURE.md): sólo lectura, y sólo para descubrir
+      # contenedores por la etiqueta freya.service (ROADMAP.md mon-02) --
+      # nunca para crear/parar/modificar nada. Ver README de este servicio.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    networks:
+      - freya-mesh
+      - freya-mon
+
+    # El socket es 660 root:root en el host (comprobado en vivo): el proceso
+    # sigue como UID 10001, nunca root, pero necesita el grupo 0 como
+    # suplementario para que el permiso de grupo del socket le alcance.
+    group_add:
+      - "0"
+
+    # Sin puertos publicados: sólo frontend habla con el exterior.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    labels:
+      freya.service: "gestor-monitoring"
+      freya.metrics.port: "8008"
+      freya.metrics.path: "/metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true
+  freya-mon:
+    external: true

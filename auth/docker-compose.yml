@@ -1,0 +1,73 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f auth/docker-compose.yml up -d
+
+services:
+  auth:
+    build:
+      context: ..
+      dockerfile: auth/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/auth:dev
+    container_name: freya-auth
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: auth
+      FREYA_PORT: "8002"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_GESTOR_DB_URL: "https://freya-gestor-db:8001"
+      FREYA_SECRETS_URL: "https://freya-secrets:8003"
+      FREYA_STORAGE_URL: "https://freya-storage:8004"
+      FREYA_CLIENT_ID: "auth"
+
+    volumes:
+      - ../infra/certs/auth:/run/certs:ro
+      - ../infra/secrets/auth:/run/secrets:ro
+      # Sólo mientras gestor-db esté en modo bootstrap (Fase 1): auth
+      # necesita su token estático para crear su propio schema y cuentas de
+      # servicio antes de que exista ningún JWT. Se retira cuando `secrets`
+      # asuma la emisión de credenciales (Fase 3). Ruta aparte (no anidada
+      # bajo /run/secrets): con read_only:true, Docker no puede crear un
+      # punto de montaje dentro de otro bind mount ya montado.
+      - ../infra/secrets/gestor-db/bootstrap_token:/run/gestor-db-bootstrap-token:ro
+
+    networks:
+      - freya-mesh
+
+    # Sin puertos publicados: sólo frontend habla con el exterior.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    labels:
+      freya.service: "auth"
+      freya.metrics.port: "8002"
+      freya.metrics.path: "/metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true

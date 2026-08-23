@@ -1,0 +1,75 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f gestor-db/docker-compose.yml up -d
+
+services:
+  gestor-db:
+    build:
+      context: ..
+      dockerfile: gestor-db/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/gestor-db:dev
+    container_name: freya-gestor-db
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: gestor-db
+      FREYA_PORT: "8001"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_GESTOR_DB_URL: "https://freya-gestor-db:8001"
+      FREYA_SECRETS_URL: "https://freya-secrets:8003"
+      FREYA_STORAGE_URL: "https://freya-storage:8004"
+      FREYA_API_KEY: "gestor-db"
+      # Único servicio autorizado a hablar el protocolo nativo con database,
+      # por la red privada freya-db (ver docs/ARCHITECTURE.md §3).
+      FREYA_POSTGRES_HOST: "freya-database"
+      FREYA_POSTGRES_PORT: "5432"
+      FREYA_POSTGRES_DB: "${POSTGRES_DB:-freya}"
+      FREYA_POSTGRES_USER: "${POSTGRES_USER:-freya}"
+
+    volumes:
+      - ../infra/certs/gestor-db:/run/certs:ro
+      - ../infra/secrets/gestor-db:/run/secrets:ro
+
+    networks:
+      - freya-mesh
+      - freya-db
+
+    # Sin puertos publicados: sólo frontend habla con el exterior.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+    labels:
+      freya.service: "gestor-db"
+      freya.metrics.port: "8001"
+      freya.metrics.path: "/metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true
+  freya-db:
+    external: true

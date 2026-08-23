@@ -1,0 +1,35 @@
+[project]
+name = "freya-common"
+version = "0.1.0"
+description = "Librería común de los servicios de Freya"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "httpx>=0.27",
+    "PyJWT[crypto]>=2.9",
+    "prometheus-client>=0.21",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["freya_common"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+# N818 (las excepciones deberían llamarse "*Error"): freya_common nunca se
+# había lintado directamente hasta que pasó a ser su propio proyecto (todo
+# servicio la copiaba y usaba, pero ningún `ruff check` la tocaba). Sus
+# nombres (NotFound, Conflict, Unauthorized...) ya están importados por
+# los ocho servicios -- renombrarlos ahora es un cambio de superficie
+# ancho sin relación con empaquetarla como artefacto, así que se ignora
+# aquí en vez de arrastrar un rename masivo a esta tarea.
+ignore = ["N818"]

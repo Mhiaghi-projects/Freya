@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Freya</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="login-screen" class="screen hidden">
+  <form id="login-form" class="login-card">
+    <h1>Freya</h1>
+    <p class="muted">Inicia sesión para administrar la plataforma.</p>
+    <label>Usuario
+      <input type="text" id="login-email" autocomplete="username" required>
+    </label>
+    <label>Contraseña
+      <input type="password" id="login-password" autocomplete="current-password" required>
+    </label>
+    <p id="login-error" class="error hidden"></p>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+
+<div id="change-password-screen" class="screen hidden">
+  <form id="change-password-form" class="login-card">
+    <h1>Cambia tu contraseña</h1>
+    <p class="muted">Es la primera vez que entras con esta cuenta. Elige una contraseña nueva antes de continuar.</p>
+    <label>Contraseña actual
+      <input type="password" id="cp-current" autocomplete="current-password" required>
+    </label>
+    <label>Contraseña nueva (mín. 8 caracteres)
+      <input type="password" id="cp-new" autocomplete="new-password" minlength="8" required>
+    </label>
+    <p id="cp-error" class="error hidden"></p>
+    <button type="submit">Cambiar contraseña</button>
+  </form>
+</div>
+
+<div id="app-shell" class="screen hidden">
+  <nav class="sidebar">
+    <div class="brand">Freya</div>
+    <a href="#/dashboard" data-route="dashboard">Panel</a>
+    <a href="#/git" data-route="git">Git</a>
+    <a href="#/storage" data-route="storage">Storage</a>
+    <a href="#/cicd" data-route="cicd">CI/CD</a>
+    <a href="#/projects" data-route="projects">Proyectos</a>
+    <a href="#/progress" data-route="progress">Mi Progreso</a>
+    <a href="#/admin-users" data-route="admin-users" class="hidden">Usuarios</a>
+    <div class="sidebar-footer">
+      <span id="whoami" class="muted"></span>
+      <button id="logout-btn" class="link-btn">Salir</button>
+    </div>
+  </nav>
+  <main id="content"></main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

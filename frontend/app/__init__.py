@@ -1,0 +1,1 @@
+"""Servicio frontend de Freya."""
