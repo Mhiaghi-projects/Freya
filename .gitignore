@@ -31,6 +31,10 @@ data/
 volumes/
 infra/backups/
 
+# Generado en el momento del despliegue por
+# services/github-runner/deploy-service.sh, nunca a mano
+.deploy-compose.yml
+
 # Editores y sistema
 .vscode/
 .idea/

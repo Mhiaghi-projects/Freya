@@ -20,6 +20,14 @@
 #
 # Reproduce a mano los mismos pasos que .freya/pipeline.yaml declaraba
 # para el viejo cicd (docs/ROADMAP.md ci-02): lint, test, security_scan.
+#
+# El paso "Desplegar" usa services/github-runner/deploy-service.sh, no
+# "docker compose up" directo -- Docker-outside-of-Docker gotcha real
+# encontrado en vivo: las rutas relativas de "volumes:" del
+# docker-compose.yml del servicio (../infra/certs/..., ../infra/secrets/...)
+# las resuelve el DAEMON del host, no este contenedor, así que
+# /workspace/... no significa nada para él y monta un directorio vacío en
+# vez de los certificados reales. Ver ese script para el porqué exacto.
 
 name: Deploy gamification
 
@@ -57,7 +65,4 @@ jobs:
         run: docker run --rm --env HOME=/tmp freya/gamification:test pip-audit
 
       - name: Desplegar
-        run: |
-          docker compose --project-name freya \
-            -f gamification/docker-compose.yml --env-file .env \
-            up -d --build
+        run: bash services/github-runner/deploy-service.sh gamification
