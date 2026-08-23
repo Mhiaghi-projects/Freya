@@ -46,7 +46,15 @@ services:
       resources:
         limits:
           cpus: "0.35"
-          memory: 128M
+          # 128M no dejaba margen: el proceso base ya usa ~96M (75%), y el
+          # healthcheck ("traefik healthcheck --ping") no es una llamada
+          # IPC al proceso vivo -- es un binario Go NUEVO por cada chequeo,
+          # que necesita su propio arranque de runtime. Sin margen, ese fork
+          # se queda colgado bajo presion de memoria (cgroup v2 puede
+          # estancar en vez de matar), lo que Docker reporta como "timed out
+          # starting health check" -- visto en vivo: FailingStreak 168
+          # practicamente desde el arranque del contenedor.
+          memory: 256M
 
     labels:
       freya.service: "traefik"

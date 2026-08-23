@@ -49,7 +49,7 @@ storage, no sólo de frontend -- se dejó para si hace falta más adelante).
 
 ---
 
-## 2026-08-22 — Roles de auth: por servicio, no un motor de permisos dinámico
+## 2026-08-22 — Roles de auth: por servicio, no un motor de permisos dinámico [SUPERADA, ver entrada de abajo]
 
 **Decisión:** `auth/app/domain/users.py:ROLE_PERMISSIONS` ganó
 `git_user`/`storage_user`/`cicd_user`/`monitoring_user`/`project_user`,
@@ -64,6 +64,20 @@ permisos fijos) sin construir un motor de RBAC nuevo.
 pero es un cambio de schema -- tabla de permisos por usuario en vez de por
 role -- que nadie pidió; roles con nombre siguen el ejemplo que dio el
 usuario al pie de la letra).
+
+**Superada el mismo día:** el usuario corrigió explícitamente el diseño --
+"Debe haber solo 2 tipo de usuarios, no? admin y usuario. El segundo puede
+tener diferentes roles segun los servicios que usara". Un rol con nombre
+por servicio no escala (5 roles para 4 servicios, mutuamente excluyentes:
+un usuario no podía tener git_user *y* cicd_user a la vez) y no era lo que
+pidió, aunque en su momento pareció el ejemplo más literal de su frase
+original. Rediseño real: `ROLE_PERMISSIONS` vuelve a sólo `user`/`admin`;
+el acceso por servicio pasa a `users.extra_permissions` (columna
+`text[]`, migración `0003_extra_permissions.sql`), una lista libre y
+combinable validada contra `SERVICE_GRANTS` (git/cicd/monitoring/
+project-manager). `full_permissions(role, extra_permissions)` mezcla
+ambas. Ver `auth/app/domain/users.py`, `frontend/app/static/app.js`
+(sección `admin-users`, checkboxes de acceso).
 
 ---
 
@@ -266,9 +280,18 @@ sesión (ver resumen de la conversación, "3 aún no").
   personalizado, por ejemplo), este módulo hay que reescribirlo, no sólo
   reconfigurarlo.
 
+**Actualización 2026-08-23: repo real creado y pipeline verificado
+end-to-end.** El usuario creó `Mhiaghi-projects/Freya` (organización) como
+monorepo único ("go with mono", confirmado tras preguntar si prefería 7
+repos separados). Ver entrada de abajo ("Submódulos fantasma...") para el
+bug que impidió que el código de 7 servicios llegara a GitHub durante la
+primera mitad de esta migración -- una vez arreglado, push real →
+GitHub Actions → runner autoalojado → deploy local se confirmó
+funcionando para los 6 servicios afectados (auth, gestor-db,
+gestor-monitoring, gamification, frontend, freya-common).
+
 **No construido todavía, a propósito -- depende de decisiones que sólo
-puede tomar el usuario con los repos de GitHub ya creados:**
-- Repos de GitHub reales (el usuario los crea).
+puede tomar el usuario:**
 - `.env`: `GITHUB_RUNNER_URL`, `GITHUB_OWNER`,
   `GITHUB_GAMIFICATION_REPOS`, `GITHUB_DEFAULT_USER_ID`, y el PAT en
   `infra/secrets/github-runner/github_pat` /
@@ -283,3 +306,74 @@ puede tomar el usuario con los repos de GitHub ya creados:**
   viejos -- repuntarlas a la API de GitHub (repos, Actions runs, Issues)
   es trabajo real pendiente, no tiene sentido escribirlo a ciegas sin
   poder probarlo contra la API de GitHub de verdad todavía.
+
+---
+
+## 2026-08-23 — Submódulos fantasma: 7 servicios nunca llegaron a GitHub
+
+**Bug encontrado, no pedido por el usuario.** Al hacer un push de rutina
+tras arreglar `deploy-freya-common.yml`, `git add` sobre `auth` falló con
+`fatal: Pathspec '...' is in submodule 'auth'`. `git ls-files -s` mostró
+que `auth`, `freya-common`, `frontend`, `gamification`, `gestor-db`,
+`gestor-monitoring` y `git` estaban registrados como gitlinks (modo
+`160000`) en el índice del monorepo raíz -- resto de un `.git` anidado
+que cada uno tuvo en la era de git-propio-por-servicio. Esos `.git`
+anidados ya se habían borrado (con permiso explícito, antes en esta
+sesión), pero el índice del repo raíz seguía apuntando a ellos como
+submódulo opaco. Sin `.gitmodules`, así que ni siquiera se comportaban
+como un submódulo real -- simplemente cualquier `git status`/`add`/`diff`
+ignoraba en silencio TODO cambio dentro de esos 7 directorios, desde que
+el monorepo se creó.
+
+**Impacto real:** todo el trabajo de esta sesión dentro de esos 7
+directorios -- la construcción completa de `frontend`, `gamification`
+entero, el rediseño de roles de `auth`, el fix de `freya.health.scheme`
+de `gestor-monitoring` -- nunca llegó a GitHub pese a que `git commit`/
+`git push` en la raíz parecía funcionar (esos commits sólo tocaban
+archivos fuera de los 7 directorios afectados).
+
+**Arreglo:** `git rm --cached <7 dirs>` + `git add <7 dirs>` -- sin
+`.git` anidado que reintroducir, se re-registran como árbol normal de
+archivos. Commit `60637b5` (213 archivos, 13262 inserciones), push
+exitoso. Disparó 6 workflows de deploy en paralelo (uno por servicio
+afectado con cambios reales) -- primera vez que el código real de esos
+7 servicios se despliega vía GitHub Actions.
+
+---
+
+## 2026-08-23 — Traefik: límite de memoria (128M) demasiado ajustado para su propio healthcheck
+
+**Bug encontrado durante la verificación del batch de 6 deploys de
+arriba, no pedido por el usuario.** `freya-traefik` llevaba 168 chequeos
+de salud fallidos seguidos -- prácticamente desde que arrancó el
+contenedor (2 horas antes), con el mensaje "timed out starting health
+check". `docker exec freya-traefik echo hi` (el exec más simple posible,
+sin relación con el healthcheck en sí) también se quedaba colgado
+indefinidamente -- Docker no lograba ni arrancar un proceso nuevo dentro
+del contenedor.
+
+**Causa real:** `traefik healthcheck --ping` no es una llamada IPC al
+proceso Traefik ya corriendo -- es un binario Go *nuevo* por cada
+chequeo, con su propio arranque de runtime. El proceso base de Traefik
+ya usaba ~96MiB de los 128MiB del límite (`deploy.resources.limits.
+memory`) -- 75% ocupado en reposo. Sin margen real, el fork para ese
+proceso nuevo se queda esperando memoria bajo el `memory.max` de cgroup
+v2 (que puede estancar el proceso en vez de matarlo si el kernel cree
+que hay memoria reclamable en otro sitio) -- de ahí el "colgado" en vez
+de un error inmediato.
+
+**Arreglo:** subir el límite de `services/traefik/docker-compose.yml` de
+128M a 256M (mismo valor que ya usan otros servicios como `git` y
+`gestor-db`). Redeploy manual (`docker compose --project-name freya -f
+services/traefik/docker-compose.yml up -d`) confirmó healthy de
+inmediato; el enrutado hacia `frontend` se verificó seguir funcionando
+igual. No estaba en el batch de 6 servicios que dispararon workflows de
+GitHub Actions -- el cambio en el compose todavía no está commiteado por
+un push real, sólo aplicado en vivo en este host, pendiente de commit.
+
+**Nota relacionada, no arreglada:** `freya-storage` se observó al 91.8%
+de su límite de 256M (235MiB) durante la misma verificación, con el
+mismo patrón de healthcheck basado en un proceso Python nuevo por
+chequeo. Se recuperó solo (no llegó a acumular un streak de fallos como
+Traefik) y no formaba parte de este batch de deploys, así que no se tocó
+-- si vuelve a flaquear, aplicar el mismo diagnóstico.
