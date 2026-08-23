@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import time
 
-import asyncpg
 from fastapi import APIRouter, Request
 from freya_common import require_permissions
 
 from app.deps import CallerDep, ClaimsDep
 from app.domain.query_builder import build_select
 from app.domain.tenant import resolve_schema
-from app.infra.db import translate_pg_error
+from app.infra.db import PG_ERRORS, translate_pg_error
 from app.models.requests import QueryRequest
 
 router = APIRouter(tags=["query"])
@@ -43,7 +42,7 @@ async def query(
             rows = await conn.fetch(
                 sql, *params, timeout=settings.query_timeout_seconds
             )
-    except asyncpg.PostgresError as exc:
+    except PG_ERRORS as exc:
         raise translate_pg_error(exc) from exc
 
     return {

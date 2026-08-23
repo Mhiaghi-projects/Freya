@@ -41,7 +41,14 @@ async def sign_in(
             json={"email": body.email, "password": body.password},
         )
     except FreyaError as exc:
-        raise Unauthorized("email o contraseña inválidos") from exc
+        # Sólo un 401 de verdad de auth significa "credenciales
+        # inválidas". Cualquier otra cosa (auth caído, 503, timeout) es un
+        # problema de infraestructura -- decirle al usuario que su
+        # contraseña está mal cuando en realidad auth no responde es
+        # engañoso y le manda a intentar un reset que no arregla nada.
+        if exc.status_code == 401:
+            raise Unauthorized("email o contraseña inválidos") from exc
+        raise
 
     data = ServiceClient.data(result)
     set_session_cookies(

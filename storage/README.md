@@ -36,6 +36,18 @@ completo más allá de eso —archivar tras N versiones, purgar tras M
 programado `storage_lifecycle` (§13.5), no de esta escritura: el `PUT`
 nunca recorre todo el historial, sólo la versión inmediatamente anterior.
 
+## `encryption` del bucket: aceptado, todavía no implementado
+
+`PUT /storage/buckets/{bucket}` acepta y guarda `encryption`, pero
+`blob_store.write`/`read` no lo miran -- los bytes se escriben en disco tal
+cual, cifrados o no da igual. A diferencia de `max_versions` (arriba, tarea
+explícita de `storage_lifecycle`), esto no estaba documentado como
+pendiente en ningún sitio: un bucket creado con `encryption: true` no
+protege el contenido más que uno con `encryption: false`. Cifrado real en
+reposo (gestión de claves, IV/nonce, rotación) es una pieza de seguridad
+que merece su propio diseño, no un efecto colateral de un barrido de bugs
+-- ver `docs/DECISIONS.md`.
+
 ## Endpoints
 
 `Authorization: Bearer <jwt>`. Permisos: `read:storage` / `write:storage`

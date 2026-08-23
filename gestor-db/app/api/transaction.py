@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import asyncpg
 from fastapi import APIRouter, Request
 from freya_common import new_id, require_permissions
 
@@ -17,7 +16,7 @@ from app.domain.query_builder import (
     build_upsert,
 )
 from app.domain.tenant import resolve_schema
-from app.infra.db import parse_rows_affected, translate_pg_error
+from app.infra.db import PG_ERRORS, parse_rows_affected, translate_pg_error
 from app.models.requests import Operation, TransactionRequest
 
 router = APIRouter(tags=["transaction"])
@@ -73,7 +72,7 @@ async def transaction(
                 results.append(
                     await _run_operation(conn, op, settings.query_timeout_seconds)
                 )
-    except asyncpg.PostgresError as exc:
+    except PG_ERRORS as exc:
         raise translate_pg_error(exc) from exc
 
     return {

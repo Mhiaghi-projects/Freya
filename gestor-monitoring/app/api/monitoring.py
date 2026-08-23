@@ -50,7 +50,9 @@ async def trigger_health_check(
         raise NotFound(
             f"'{service}' no es un servicio conocido", details={"service": service}
         )
-    return await state.health_monitor.check_service(service, match["metrics_port"])
+    return await state.health_monitor.check_service(
+        service, match["metrics_port"], scheme=match["scheme"]
+    )
 
 
 @router.get("/metrics/{service}")

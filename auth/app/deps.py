@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from freya_common import Forbidden, MissingCredentials, Unauthorized
+from freya_common.context import current_tenant
 
 from app.config import Settings, get_settings
 
@@ -36,6 +37,8 @@ async def admin_principal(request: Request) -> dict[str, Any]:
     claims = await verifier.verify(token)
     if claims.get("role") != "admin":
         raise Forbidden("Se requiere role: admin")
+    if claims.get("tenant_id") != current_tenant():
+        raise Forbidden("El token no pertenece a este tenant")
     return claims
 
 
@@ -57,6 +60,8 @@ async def user_principal(request: Request) -> dict[str, Any]:
     claims = await verifier.verify(token)
     if "service" in claims:
         raise Forbidden("Se requiere un token de usuario, no de servicio")
+    if claims.get("tenant_id") != current_tenant():
+        raise Forbidden("El token no pertenece a este tenant")
     return claims
 
 

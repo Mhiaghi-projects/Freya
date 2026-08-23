@@ -86,7 +86,27 @@ async def put_object(
             f"'{key}' ya existe en '{bucket}'", details={"bucket": bucket, "key": key}
         )
 
-    await check_quota(client, tenant, bucket=bucket, additional_bytes=len(content))
+    bytes_to_free = 0
+    overwriting = existing is not None and not bucket_row["versioning"]
+    if overwriting and existing["current_version_id"]:
+        previous = await gdb_query(
+            client,
+            tenant,
+            table="storage_versions",
+            select=["size"],
+            where={"id": existing["current_version_id"]},
+            limit=1,
+        )
+        if previous:
+            bytes_to_free = previous[0]["size"]
+
+    await check_quota(
+        client,
+        tenant,
+        bucket=bucket,
+        additional_bytes=len(content),
+        bytes_to_free=bytes_to_free,
+    )
 
     version_id = new_id("ver")
     checksum, size = blob_store.write(
@@ -181,7 +201,7 @@ async def get_object_metadata(
         tenant,
         table="storage_versions",
         select=["id", "status", "size", "mime_type", "etag", "metadata", "created_at"],
-        where={"id": target_version},
+        where={"id": target_version, "object_id": row["id"]},
         limit=1,
     )
     if not versions or versions[0]["status"] == "DELETED":

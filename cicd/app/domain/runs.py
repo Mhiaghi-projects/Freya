@@ -4,10 +4,12 @@ recortado: ver app/domain/runner.py y README para el porqué)."""
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from freya_common import (
+    DependencyUnavailable,
     FreyaError,
     NotFound,
     ServiceClient,
@@ -19,6 +21,8 @@ from freya_common import (
 
 from app.domain import runner
 from app.domain.pipelines import get_pipeline
+
+logger = logging.getLogger(__name__)
 
 _ARTIFACTS_BUCKET = "artifacts"
 
@@ -117,6 +121,25 @@ async def trigger_pipeline(
             data={"status": "failed", "finished_at": _now()},
         )
         raise UnprocessableEntity(str(exc)) from exc
+    except Exception as exc:
+        # Cualquier otra cosa (Docker Desktop caído, socket inaccesible,
+        # OSError...) es un fallo real de infraestructura, no de la
+        # petición -- sin este catch-all, la fila de ci_runs ya insertada
+        # arriba como "running" se queda así para siempre: nada la marca
+        # como fallida, y GET /runs/{id} nunca refleja que la ejecución
+        # murió. Ver docs/DECISIONS.md.
+        logger.exception("fallo inesperado del runner", extra={"run_id": run_id})
+        await gdb_mutate(
+            client,
+            tenant,
+            table="ci_runs",
+            action="update",
+            where={"id": run_id},
+            data={"status": "failed", "finished_at": _now()},
+        )
+        raise DependencyUnavailable(
+            f"el runner de CI/CD falló inesperadamente: {exc}"
+        ) from exc
 
     for job in result.jobs:
         job_id = new_id("job")

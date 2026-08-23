@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from freya_common import (
@@ -14,6 +15,8 @@ from freya_common import (
     gdb_query,
     new_id,
 )
+
+from app.domain import blob_store
 
 
 def _now() -> str:
@@ -93,23 +96,48 @@ async def list_buckets(client: ServiceClient, tenant: str) -> list[dict[str, Any
 
 
 async def delete_bucket(
-    client: ServiceClient, tenant: str, *, bucket: str, force: bool
+    client: ServiceClient, tenant: str, data_dir: Path, *, bucket: str, force: bool
 ) -> None:
     row = await get_bucket(client, tenant, bucket=bucket)
-    if not force:
-        objects = await gdb_query(
+    objects = await _query_all(
+        client,
+        tenant,
+        table="storage_objects",
+        select=["id", "key"],
+        where={"bucket": bucket, "deleted_at": {"is_null": True}},
+    )
+    if objects and not force:
+        raise Conflict(
+            f"El bucket '{bucket}' no está vacío; usa ?force=true",
+            details={"bucket": bucket},
+        )
+
+    for obj in objects:
+        versions = await _query_all(
+            client,
+            tenant,
+            table="storage_versions",
+            select=["id"],
+            where={"object_id": obj["id"]},
+        )
+        for version in versions:
+            blob_store.delete(data_dir, tenant, bucket, obj["key"], version["id"])
+        await gdb_mutate(
+            client,
+            tenant,
+            table="storage_versions",
+            action="delete",
+            where={"object_id": obj["id"]},
+        )
+        await gdb_mutate(
             client,
             tenant,
             table="storage_objects",
-            select=["id"],
-            where={"bucket": bucket, "deleted_at": {"is_null": True}},
-            limit=1,
+            action="update",
+            where={"id": obj["id"]},
+            data={"deleted_at": _now()},
         )
-        if objects:
-            raise Conflict(
-                f"El bucket '{bucket}' no está vacío; usa ?force=true",
-                details={"bucket": bucket},
-            )
+
     await gdb_mutate(
         client,
         tenant,
@@ -188,10 +216,16 @@ async def bucket_usage(
 
 
 async def check_quota(
-    client: ServiceClient, tenant: str, *, bucket: str, additional_bytes: int
+    client: ServiceClient,
+    tenant: str,
+    *,
+    bucket: str,
+    additional_bytes: int,
+    bytes_to_free: int = 0,
 ) -> None:
     usage = await bucket_usage(client, tenant, bucket=bucket)
-    if usage["total_size_bytes"] + additional_bytes > usage["quota_bytes"]:
+    projected = usage["total_size_bytes"] - bytes_to_free + additional_bytes
+    if projected > usage["quota_bytes"]:
         raise QuotaExceeded(
             f"El bucket '{bucket}' alcanzó su cuota",
             details={"bucket": bucket, "quota_bytes": usage["quota_bytes"]},

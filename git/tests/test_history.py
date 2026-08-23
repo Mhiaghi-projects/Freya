@@ -129,9 +129,16 @@ async def test_create_and_delete_branch(bare_repo: Path) -> None:
     branches = {b["name"] for b in await history.list_branches(bare_repo, "main")}
     assert "feature-x" in branches
 
-    await history.delete_branch(bare_repo, name="feature-x")
+    await history.delete_branch(bare_repo, name="feature-x", default_branch="main")
     branches = {b["name"] for b in await history.list_branches(bare_repo, "main")}
     assert "feature-x" not in branches
+
+
+async def test_no_se_puede_borrar_la_rama_por_defecto(bare_repo: Path) -> None:
+    with pytest.raises(Exception):
+        await history.delete_branch(bare_repo, name="main", default_branch="main")
+    branches = {b["name"] for b in await history.list_branches(bare_repo, "main")}
+    assert "main" in branches
 
 
 async def test_diff_entre_commits(bare_repo: Path) -> None:

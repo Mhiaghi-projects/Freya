@@ -23,8 +23,11 @@ async def authenticate_service(body: ServiceAuthRequest, request: Request) -> di
     keyring = request.app.state.keyring
     gestor_db = request.app.state.gestor_db
 
+    tenant = current_tenant()
+    request.app.state.token_rate_limiter.check(f"{tenant}:{body.service}")
+
     principal = await authenticate_service_account(
-        gestor_db, current_tenant(), service=body.service, api_secret=body.api_secret
+        gestor_db, tenant, service=body.service, api_secret=body.api_secret
     )
     access_token, ttl = issue_service_token(
         keyring,

@@ -60,7 +60,10 @@ async def get(
 ) -> dict:
     require_permissions(claims, "read:project-manager")
     return await sprint_metrics(
-        request.app.state.gestor_db, current_tenant(), sprint_id=sprint_id
+        request.app.state.gestor_db,
+        current_tenant(),
+        sprint_id=sprint_id,
+        project_id=project_id,
     )
 
 
@@ -77,5 +80,6 @@ async def update(
         request.app.state.gestor_db,
         current_tenant(),
         sprint_id=sprint_id,
+        project_id=project_id,
         status=body.status,
     )

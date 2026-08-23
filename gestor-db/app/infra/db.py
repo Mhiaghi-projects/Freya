@@ -17,8 +17,16 @@ _CONNECTION_ERRORS = (
     asyncpg.exceptions.TooManyConnectionsError,
 )
 
+# TimeoutError (lo que asyncpg lanza de verdad cuando `timeout=` de
+# conn.fetch/execute expira) NO hereda de asyncpg.PostgresError -- un
+# `except asyncpg.PostgresError` no lo atrapa nunca. Usar esta tupla en vez
+# de asyncpg.PostgresError a solas en cada call site para que
+# translate_pg_error() reciba también los timeouts y los traduzca a 503 en
+# vez de dejarlos caer como 500 genérico sin traducir.
+PG_ERRORS = (asyncpg.PostgresError, TimeoutError)
 
-def translate_pg_error(exc: asyncpg.PostgresError) -> FreyaError:
+
+def translate_pg_error(exc: asyncpg.PostgresError | TimeoutError) -> FreyaError:
     """Traduce una excepción de asyncpg al formato de error de Freya.
 
     Caída de conexión → 503. Choque de unicidad → 409 (DUPLICATE_RESOURCE).

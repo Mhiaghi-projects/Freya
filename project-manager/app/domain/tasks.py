@@ -292,12 +292,31 @@ async def update_task(
                     details={"blocking_task_ids": blocking},
                 )
         data["status"] = status
-        data["position"] = await _next_position(
-            client, tenant, project_id=task["project_id"], status=status
+        # Si el caller ya manda la posición deseada dentro de la columna
+        # destino (arrastrar y soltar entre dos tarjetas, no sólo al final),
+        # respetarla -- antes esta rama siempre pisaba position con
+        # _next_position (al final), ignorando en silencio cualquier
+        # posición que el caller hubiera mandado junto con el cambio de
+        # status.
+        data["position"] = (
+            position
+            if position is not None
+            else await _next_position(
+                client, tenant, project_id=task["project_id"], status=status
+            )
         )
         if status == DONE_STATUS:
             data["completed_at"] = _now()
             data["completed_by"] = completed_by
+        elif task["status"] == DONE_STATUS:
+            # Reabrir una task "done" (p.ej. arrastrarla de vuelta a
+            # "in_progress") dejaba completed_at/completed_by de la
+            # completitud anterior -- dato obsoleto y engañoso para
+            # cualquiera que lo lea directamente (sprint/milestone metrics
+            # usan status, no estos campos, así que no afectaba puntajes,
+            # pero el campo en sí mentía).
+            data["completed_at"] = None
+            data["completed_by"] = None
     elif position is not None:
         data["position"] = position
 

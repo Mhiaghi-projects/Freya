@@ -56,7 +56,11 @@ async def remove(
     if bucket in _PROTECTED_BUCKETS:
         raise Forbidden(f"'{bucket}' es un bucket reservado de la plataforma")
     await delete_bucket(
-        request.app.state.gestor_db, current_tenant(), bucket=bucket, force=force
+        request.app.state.gestor_db,
+        current_tenant(),
+        request.app.state.settings.data_dir,
+        bucket=bucket,
+        force=force,
     )
 
 

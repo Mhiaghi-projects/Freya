@@ -13,6 +13,8 @@ from typing import Any
 
 from freya_common import BadRequest, ServiceClient, gdb_mutate, gdb_query, new_id
 
+from app.domain.stats import TASK_COMPLETION_SOURCES
+
 _PERIODS = {"daily", "weekly", "monthly", "annual"}
 _TARGET_TYPES = {"tasks_completed", "xp_earned"}
 
@@ -101,7 +103,7 @@ async def _progress(client: ServiceClient, tenant: str, goal: dict[str, Any]) ->
 
     if goal["target_type"] == "xp_earned":
         return sum(e["xp"] for e in events)
-    return sum(1 for e in events if e["source"] == "task_completed")
+    return sum(1 for e in events if e["source"] in TASK_COMPLETION_SOURCES)
 
 
 async def list_goals(

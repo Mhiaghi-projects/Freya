@@ -95,35 +95,22 @@ class LogArchiver:
         return int(datetime.fromisoformat(rows[0]["last_fetched_at"]).timestamp())
 
     async def _save_cursor(self, service: str, epoch: int) -> None:
-        exists = await gdb_query(
+        # service es PRIMARY KEY de mon_log_cursors: un solo upsert real
+        # (ON CONFLICT) en vez de un query de existencia + insert/update por
+        # separado -- dos idas y vueltas a gestor-db por servicio y ciclo,
+        # para lo que Postgres resuelve en una.
+        await gdb_mutate(
             self._gestor_db,
             self._tenant,
             table="mon_log_cursors",
-            select=["service"],
-            where={"service": service},
-            limit=1,
+            action="upsert",
+            conflict_target=["service"],
+            data={
+                "service": service,
+                "last_fetched_at": datetime.fromtimestamp(epoch, tz=UTC).isoformat(),
+                "updated_at": _now_iso(),
+            },
         )
-        data = {
-            "last_fetched_at": datetime.fromtimestamp(epoch, tz=UTC).isoformat(),
-            "updated_at": _now_iso(),
-        }
-        if exists:
-            await gdb_mutate(
-                self._gestor_db,
-                self._tenant,
-                table="mon_log_cursors",
-                action="update",
-                where={"service": service},
-                data=data,
-            )
-        else:
-            await gdb_mutate(
-                self._gestor_db,
-                self._tenant,
-                table="mon_log_cursors",
-                action="insert",
-                data={"service": service, **data},
-            )
 
     async def archive_once(self) -> None:
         containers = await self._docker.list_service_containers()
@@ -132,21 +119,29 @@ class LogArchiver:
             return
         await self._ensure_bucket()
 
-        cutoff = _now_epoch()
         for container in running:
             service = container["service"]
             try:
                 since = await self._cursor(service)
                 text = await self._docker.container_logs(container["id"], since=since)
+                # Docker devuelve todo desde `since` hasta SU "ahora" real, en
+                # el instante en que esta llamada concreta se ejecuta -- no
+                # el "ahora" de cuando arrancó el ciclo entero. Guardar un
+                # `cutoff` común (calculado antes del bucle) como cursor
+                # reabre en el próximo ciclo la ventana [cutoff,
+                # fetch_real) que este contenedor en concreto ya archivó,
+                # duplicando líneas cada vez. `fetched_at` (después de la
+                # llamada) es una cota segura de lo que de verdad se cubrió.
+                fetched_at = _now_epoch()
                 if text.strip():
-                    key = f"{service}/{cutoff}.log"
+                    key = f"{service}/{fetched_at}.log"
                     await self._storage.put(
                         f"/storage/{_BUCKET}/{key}",
                         tenant=self._tenant,
                         content=text.encode("utf-8"),
                         headers={"Content-Type": "text/plain; charset=utf-8"},
                     )
-                await self._save_cursor(service, cutoff)
+                await self._save_cursor(service, fetched_at)
                 self.last_result[service] = "ok"
             except (FreyaError, httpx.HTTPError) as exc:
                 self.last_result[service] = f"{type(exc).__name__}: {exc}"

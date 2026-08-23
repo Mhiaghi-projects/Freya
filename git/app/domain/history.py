@@ -19,6 +19,21 @@ from app.domain.git_ops import GitError, run_git
 
 _SEP = "\x1f"  # separador de campo: no aparece en mensajes de commit normales
 _TAG_NAME_RE = re.compile(r"^v\d+\.\d+\.\d+(-[a-z0-9.]+)?$")
+# No explotable hoy (argv en forma de lista, nunca shell=True; el prefijo
+# "refs/heads/" impide que un nombre con "-" al frente se lea como flag) --
+# pero repo_name (RepoCreate) y el nombre de tag (validate_tag_name, abajo)
+# sí se validan con regex en el borde como segunda línea de defensa, y el
+# nombre de rama era la única excepción, confiando sólo en que git rechace
+# un ref-name inválido. Aproximación simplificada de `git check-ref-format`.
+_BRANCH_NAME_RE = re.compile(r"^(?!-)(?!.*\.\.)(?!.*[./]$)[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def validate_branch_name(name: str) -> None:
+    if not _BRANCH_NAME_RE.match(name):
+        raise UnprocessableEntity(
+            f"'{name}' no es un nombre de rama válido",
+            details={"pattern": _BRANCH_NAME_RE.pattern},
+        )
 
 
 async def _rev_parse(workdir: Path, ref: str) -> str:
@@ -54,6 +69,7 @@ async def list_branches(workdir: Path, default_branch: str) -> list[dict[str, An
 
 
 async def create_branch(workdir: Path, *, name: str, from_commit: str) -> None:
+    validate_branch_name(name)
     sha = await _rev_parse(workdir, from_commit)
     try:
         await run_git(
@@ -63,7 +79,19 @@ async def create_branch(workdir: Path, *, name: str, from_commit: str) -> None:
         raise Conflict(f"No se pudo crear la rama '{name}'") from exc
 
 
-async def delete_branch(workdir: Path, *, name: str) -> None:
+async def delete_branch(workdir: Path, *, name: str, default_branch: str) -> None:
+    if name == default_branch:
+        # list_branches ya la anuncia como "protected": true -- sin este
+        # guard, nada lo impedía de verdad. Borrar la rama por defecto deja
+        # el HEAD simbólico del bare repo (symbolic-ref HEAD
+        # refs/heads/{default_branch}, fijado una sola vez en
+        # git_ops.init_bare) apuntando a un ref que ya no existe: "HEAD sin
+        # nacer" para cualquier clone posterior, el mismo problema ya
+        # documentado en git/README.md para repos vacíos, pero ahora en un
+        # repo que sí tenía historia.
+        raise Conflict(
+            f"'{name}' es la rama por defecto del repositorio; no se puede borrar"
+        )
     try:
         await run_git(["update-ref", "-d", f"refs/heads/{name}"], cwd=workdir)
     except GitError as exc:

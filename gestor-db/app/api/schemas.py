@@ -7,13 +7,12 @@ crear schemas con nombre adicionales dentro de su namespace
 
 from __future__ import annotations
 
-import asyncpg
 from fastapi import APIRouter, Request
 from freya_common import Conflict, require_permissions
 
 from app.deps import CallerDep, ClaimsDep
 from app.domain.tenant import quote_identifier, resolve_schema
-from app.infra.db import translate_pg_error
+from app.infra.db import PG_ERRORS, translate_pg_error
 from app.models.requests import SchemaCreateRequest
 
 router = APIRouter(tags=["schemas"])
@@ -33,7 +32,7 @@ async def list_schemas(
                 caller.tenant,
                 f"{caller.tenant}_%",
             )
-    except asyncpg.PostgresError as exc:
+    except PG_ERRORS as exc:
         raise translate_pg_error(exc) from exc
     return [{"schema": row["schema_name"]} for row in rows]
 
@@ -55,6 +54,6 @@ async def create_schema(
                     f"El schema '{schema}' ya existe", details={"schema": schema}
                 )
             await conn.execute(f"CREATE SCHEMA {quote_identifier(schema)}")
-    except asyncpg.PostgresError as exc:
+    except PG_ERRORS as exc:
         raise translate_pg_error(exc) from exc
     return {"schema": schema}

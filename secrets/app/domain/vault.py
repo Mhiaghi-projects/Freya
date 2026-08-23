@@ -409,6 +409,45 @@ async def delete_secret(
             where={"secret_id": row["id"], "version": version},
         )
 
+        if version == row["current_version"]:
+            # Borrar justo la versión "actual" deja `secrets.current_version`
+            # apuntando a una versión que ya no existe -- toda lectura sin
+            # ?version= explícito (incluida la de más arriba en este mismo
+            # archivo) fallaría con NotFound aunque queden versiones
+            # anteriores perfectamente válidas. Recalcula el actual a partir
+            # de lo que sobrevivió; si no queda nada, no hay "actual" posible
+            # -- se trata igual que el borrado completo de arriba.
+            remaining = await gdb_query(
+                client,
+                tenant,
+                table="secret_versions",
+                select=["version"],
+                where={"secret_id": row["id"]},
+                order_by=[{"field": "version", "direction": "desc"}],
+                limit=1,
+            )
+            if remaining:
+                await gdb_mutate(
+                    client,
+                    tenant,
+                    table="secrets",
+                    action="update",
+                    where={"id": row["id"]},
+                    data={
+                        "current_version": remaining[0]["version"],
+                        "updated_at": _now(),
+                    },
+                )
+            else:
+                await gdb_mutate(
+                    client,
+                    tenant,
+                    table="secrets",
+                    action="update",
+                    where={"id": row["id"]},
+                    data={"deleted_at": _now()},
+                )
+
 
 async def list_versions(
     client: ServiceClient, tenant: str, *, key: str

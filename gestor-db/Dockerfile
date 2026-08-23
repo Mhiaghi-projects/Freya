@@ -19,7 +19,7 @@ COPY gestor-db/pyproject.toml /build/
 
 RUN pip install --no-cache-dir /build/freya-common \
  && pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.30" \
-        "asyncpg>=0.30" "sqlparse>=0.5"
+        "asyncpg>=0.30"
 
 # --- runtime -----------------------------------------------------------
 FROM python:3.12-slim AS runtime

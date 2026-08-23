@@ -43,7 +43,7 @@ def create_app(
     # generado con el contexto (tenant, request_id) que Context dejó fijado.
     app.add_middleware(ContextMiddleware, default_tenant=settings.default_tenant)
     app.add_middleware(EnvelopeMiddleware)
-    install_error_handlers(app, settings.service_name)
+    install_error_handlers(app)
     app.include_router(
         build_router(
             settings.service_name, settings.service_version, readiness_checks

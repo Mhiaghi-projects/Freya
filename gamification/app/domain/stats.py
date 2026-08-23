@@ -11,6 +11,16 @@ from freya_common import ServiceClient, gdb_mutate, gdb_query
 
 from app.domain.leveling import level_for_xp
 
+# Fuentes de gam_xp_events que representan "una tarea completada" a efectos
+# de logros/metas -- task_sync.py (project-manager) y github_task_sync.py
+# (Issues de GitHub) son dos vías independientes hacia el mismo contador
+# lógico. Cada syncer sólo veía su propia fuente al calcular task_count
+# (achievements.check_and_unlock) o "tasks_completed" (goals._progress), así
+# que un usuario con completions de las dos vías quedaba subcontado en
+# ambos sitios aunque gam_xp_events (source, source_ref) UNIQUE ya impide
+# que se duplique el XP en sí -- ver docs/DECISIONS.md.
+TASK_COMPLETION_SOURCES = ("task_completed", "github_issue")
+
 _DEFAULT_STATS = {
     "total_xp": 0,
     "level": 1,
@@ -28,6 +38,31 @@ async def get_stats(client: ServiceClient, tenant: str, user_id: str) -> dict[st
     if rows:
         return rows[0]
     return {"user_id": user_id, **_DEFAULT_STATS}
+
+
+async def count_completed_tasks(
+    client: ServiceClient, tenant: str, user_id: str
+) -> int:
+    """Cuenta tareas completadas del usuario a través de TODAS las fuentes
+    de sync (ver TASK_COMPLETION_SOURCES) -- pagina de verdad porque 200
+    (tope real de gestor-db, QueryRequest.limit) es alcanzable para alguien
+    activo entre dos vías de sync a la vez."""
+    total = 0
+    offset = 0
+    while True:
+        page = await gdb_query(
+            client,
+            tenant,
+            table="gam_xp_events",
+            select=["id"],
+            where={"user_id": user_id, "source": {"in": TASK_COMPLETION_SOURCES}},
+            limit=200,
+            offset=offset,
+        )
+        total += len(page)
+        if len(page) < 200:
+            return total
+        offset += 200
 
 
 async def _ensure_row(client: ServiceClient, tenant: str, user_id: str) -> None:

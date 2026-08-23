@@ -59,6 +59,33 @@ def _check_user_bucket_access(bucket: str, key: str, claims: dict) -> None:
         )
 
 
+def _parse_range(range_header: str, size: int) -> tuple[int, int] | None:
+    """Parsea "Range: bytes=start-end" (RFC 7233), incluido el sufijo
+    "bytes=-N" (últimos N bytes). Un valor malformado o no satisfacible se
+    trata como si no hubiera cabecera -- se sirve el objeto completo en vez
+    de reventar en 500, mismo criterio "lenient" que curl/navegadores
+    esperan de un servidor que no soporta ese caso concreto."""
+    if not range_header.startswith("bytes="):
+        return None
+    start_s, _, end_s = range_header.removeprefix("bytes=").partition("-")
+    try:
+        if start_s == "":
+            if end_s == "":
+                return None
+            suffix_len = int(end_s)
+            start = max(size - suffix_len, 0)
+            end = size - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s != "" else size - 1
+    except ValueError:
+        return None
+    end = min(end, size - 1)
+    if start < 0 or start > end:
+        return None
+    return start, end
+
+
 def _resolve_user_bucket_prefix(
     bucket: str, prefix: str | None, claims: dict
 ) -> str | None:
@@ -178,11 +205,9 @@ async def download(
     if meta["metadata"]:
         headers["X-Object-Metadata"] = meta["metadata"]
 
-    if range_header and range_header.startswith("bytes="):
-        start_s, _, end_s = range_header.removeprefix("bytes=").partition("-")
-        start = int(start_s) if start_s else 0
-        end = int(end_s) if end_s else meta["size"] - 1
-        end = min(end, meta["size"] - 1)
+    parsed_range = _parse_range(range_header, meta["size"]) if range_header else None
+    if parsed_range is not None:
+        start, end = parsed_range
         body = blob_store.read_range(
             request.app.state.settings.data_dir,
             tenant,

@@ -15,10 +15,20 @@ from .errors import RateLimited
 
 
 class SlidingWindowLimiter:
+    # Cada llamada sólo poda la deque de SU clave -- una clave que deja de
+    # llamarse (una IP, un tenant) se queda con una entrada vacía en
+    # self._hits para siempre, sin nada que la borre nunca: fuga de memoria
+    # proporcional al total de claves distintas vistas en la vida del
+    # proceso (auth/frontend corren "restart: unless-stopped", nunca se
+    # reinician solos). Una purga periódica de TODO el dict, cada N
+    # llamadas, lo acota sin necesitar una tarea de fondo aparte.
+    _SWEEP_EVERY = 500
+
     def __init__(self, *, max_attempts: int, window_seconds: float) -> None:
         self._max = max_attempts
         self._window = window_seconds
         self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._calls_since_sweep = 0
 
     def check(self, key: str) -> None:
         now = time.monotonic()
@@ -32,3 +42,17 @@ class SlidingWindowLimiter:
                 details={"retry_after_seconds": max(retry_after, 0.1)},
             )
         hits.append(now)
+
+        self._calls_since_sweep += 1
+        if self._calls_since_sweep >= self._SWEEP_EVERY:
+            self._calls_since_sweep = 0
+            self._sweep(now)
+
+    def _sweep(self, now: float) -> None:
+        stale = [
+            k
+            for k, hits in self._hits.items()
+            if not hits or now - hits[-1] > self._window
+        ]
+        for k in stale:
+            del self._hits[k]

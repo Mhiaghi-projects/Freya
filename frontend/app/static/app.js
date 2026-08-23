@@ -218,7 +218,7 @@ route("storage", async (content, [bucket]) => {
     el("thead", {}, el("tr", {}, el("th", {}, "Clave"), el("th", {}, "Tamaño"), el("th", {}, "Modificado"), el("th", {}, ""))),
     el("tbody", {}, items.map((o) =>
       el("tr", {}, el("td", {}, o.key), el("td", {}, String(o.size ?? "")), el("td", {}, o.last_modified || o.updated_at || ""),
-        el("td", {}, el("a", { href: `/api/storage/${bucket}/${o.key}`, target: "_blank", class: "btn btn-secondary" }, "Descargar")))
+        el("td", {}, el("a", { href: `/api/storage/${encodeURIComponent(bucket)}/${o.key.split("/").map(encodeURIComponent).join("/")}`, target: "_blank", class: "btn btn-secondary" }, "Descargar")))
     ))
   ));
 });
@@ -411,7 +411,7 @@ route("admin-users", async (content) => {
     const users = await api("GET", "/api/admin/users");
     tableBody.innerHTML = "";
     for (const u of users) {
-      tableBody.appendChild(el("tr", {},
+      tableBody.appendChild(el("tr", { "data-user-id": u.id },
         el("td", {}, u.email), el("td", {}, [u.first_name, u.last_name].filter(Boolean).join(" ")),
         badgeCellRole(u.role),
         el("td", {}, grantsSummary(u)),
@@ -441,24 +441,33 @@ route("admin-users", async (content) => {
     return el("td", {}, actions);
   }
 
-  async function editPermissions(u) {
+  function editPermissions(u) {
+    const tr = tableBody.querySelector(`tr[data-user-id="${u.id}"]`);
+    if (!tr) return;
     const current = grantKeys.filter((g) => grants[g].every((p) => (u.extra_permissions || []).includes(p)));
-    const picked = prompt(
-      `Accesos para ${u.email} (separados por coma): ${grantKeys.join(", ")}`,
-      current.join(", "),
-    );
-    if (picked === null) return;
-    const wanted = picked.split(",").map((s) => s.trim()).filter(Boolean);
-    const unknown = wanted.filter((g) => !grantKeys.includes(g));
-    if (unknown.length) { alert(`Desconocido: ${unknown.join(", ")}`); return; }
-    try {
-      await api("PATCH", `/api/admin/users/${u.id}/permissions`, {
-        extra_permissions: wanted.flatMap((g) => grants[g]),
-      });
-      await renderUsers();
-    } catch (err) {
-      alert(err.message);
-    }
+    const idPrefix = `eu-${u.id}`;
+    const checks = grantCheckboxes(idPrefix, current);
+    const editError = el("p", { class: "error hidden" });
+    const saveBtn = el("button", { class: "btn", type: "button" }, "Guardar");
+    const cancelBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Cancelar");
+    saveBtn.addEventListener("click", async () => {
+      editError.classList.add("hidden");
+      try {
+        await api("PATCH", `/api/admin/users/${u.id}/permissions`, {
+          extra_permissions: selectedGrants(idPrefix),
+        });
+        await renderUsers();
+      } catch (err) {
+        editError.textContent = err.message;
+        editError.classList.remove("hidden");
+      }
+    });
+    cancelBtn.addEventListener("click", () => { renderUsers(); });
+    tr.innerHTML = "";
+    tr.appendChild(el("td", { colspan: "6" },
+      el("p", { class: "muted" }, `Accesos para ${u.email}:`),
+      checks, saveBtn, " ", cancelBtn, editError,
+    ));
   }
 
   async function resetPassword(u) {

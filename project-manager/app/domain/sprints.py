@@ -8,13 +8,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from freya_common import (
-    Conflict,
     NotFound,
     ServiceClient,
+    UnprocessableEntity,
     gdb_mutate,
     gdb_query,
     new_id,
 )
+
+from app.domain.tasks import get_task
 
 STATUSES = {"planned", "active", "completed"}
 _GDB_MAX_LIMIT = 200
@@ -51,6 +53,12 @@ async def create_sprint(
         },
     )
     for task_id in task_ids:
+        # A diferencia de tasks.create_task con depends_on, esto no
+        # comprobaba que task_id existiera de verdad -- un id inválido o
+        # de otro tenant hacía un UPDATE de cero filas sin avisar: el
+        # caller creía que la task se había añadido al sprint y no era
+        # cierto.
+        await get_task(client, tenant, task_id=task_id)
         await gdb_mutate(
             client,
             tenant,
@@ -63,7 +71,11 @@ async def create_sprint(
 
 
 async def get_sprint(
-    client: ServiceClient, tenant: str, *, sprint_id: str
+    client: ServiceClient,
+    tenant: str,
+    *,
+    sprint_id: str,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     rows = await gdb_query(
         client,
@@ -77,7 +89,19 @@ async def get_sprint(
         raise NotFound(
             f"El sprint '{sprint_id}' no existe", details={"sprint_id": sprint_id}
         )
-    return rows[0]
+    sprint = rows[0]
+    if project_id is not None and sprint["project_id"] != project_id:
+        # GET/PUT /projects/{project_id}/sprints/{sprint_id} traen
+        # project_id en la propia URL pero antes nunca se comprobaba que el
+        # sprint encontrado por sprint_id perteneciera de verdad a ese
+        # project_id -- cualquier project_id "funcionaba" mientras
+        # sprint_id existiera en el tenant. No es una fuga entre tenants,
+        # pero rompe el contrato de recurso anidado que la URL promete.
+        raise NotFound(
+            f"El sprint '{sprint_id}' no existe en el proyecto '{project_id}'",
+            details={"sprint_id": sprint_id, "project_id": project_id},
+        )
+    return sprint
 
 
 async def list_sprints(
@@ -98,12 +122,21 @@ async def list_sprints(
 
 
 async def update_sprint(
-    client: ServiceClient, tenant: str, *, sprint_id: str, status: str | None
+    client: ServiceClient,
+    tenant: str,
+    *,
+    sprint_id: str,
+    project_id: str,
+    status: str | None,
 ) -> dict[str, Any]:
-    await get_sprint(client, tenant, sprint_id=sprint_id)
+    await get_sprint(client, tenant, sprint_id=sprint_id, project_id=project_id)
     if status is not None:
         if status not in STATUSES:
-            raise Conflict(
+            # 422, no 409: es una comprobación de pertenencia a un enum
+            # (validate_priority/validate_difficulty/validate_story_points
+            # hacen lo mismo en este servicio), no un conflicto de estado
+            # -- docs/CONVENTIONS.md reserva 409 para eso.
+            raise UnprocessableEntity(
                 f"status debe ser uno de {sorted(STATUSES)}", details={"status": status}
             )
         await gdb_mutate(
@@ -114,13 +147,15 @@ async def update_sprint(
             where={"id": sprint_id},
             data={"status": status},
         )
-    return await get_sprint(client, tenant, sprint_id=sprint_id)
+    return await get_sprint(client, tenant, sprint_id=sprint_id, project_id=project_id)
 
 
 async def sprint_metrics(
-    client: ServiceClient, tenant: str, *, sprint_id: str
+    client: ServiceClient, tenant: str, *, sprint_id: str, project_id: str
 ) -> dict[str, Any]:
-    sprint = await get_sprint(client, tenant, sprint_id=sprint_id)
+    sprint = await get_sprint(
+        client, tenant, sprint_id=sprint_id, project_id=project_id
+    )
 
     tasks: list[dict[str, Any]] = []
     offset = 0

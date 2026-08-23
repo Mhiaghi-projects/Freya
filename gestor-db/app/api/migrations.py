@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncpg
 from fastapi import APIRouter, Request
 from freya_common import require_permissions
 
 from app.deps import CallerDep, ClaimsDep
 from app.domain.migrations import apply_migrations
 from app.domain.tenant import resolve_schema
-from app.infra.db import translate_pg_error
+from app.infra.db import PG_ERRORS, translate_pg_error
 from app.models.requests import MigrationsRequest
 
 router = APIRouter(tags=["migrations"])
@@ -29,5 +28,5 @@ async def migrate(
             service=caller.service,
             migrations=migrations,
         )
-    except asyncpg.PostgresError as exc:
+    except PG_ERRORS as exc:
         raise translate_pg_error(exc) from exc

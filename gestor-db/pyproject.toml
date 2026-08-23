@@ -8,7 +8,6 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "asyncpg>=0.30",
-    "sqlparse>=0.5",
 ]
 
 [project.optional-dependencies]

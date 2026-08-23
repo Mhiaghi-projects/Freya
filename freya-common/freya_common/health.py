@@ -8,7 +8,6 @@ Cloud Health. /metrics expone lo que gestor-monitoring hace scrape.
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from collections.abc import Awaitable, Callable
 
@@ -17,8 +16,6 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from .metrics import metrics_response
-
-logger = logging.getLogger(__name__)
 
 # Una comprobación devuelve None si está bien, o un mensaje si falla.
 ReadinessCheck = Callable[[], Awaitable[str | None]]

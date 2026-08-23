@@ -31,7 +31,7 @@ from freya_common import FreyaError, gdb_mutate, gdb_query, new_id
 from freya_common import ServiceClient as GestorDbClient
 
 from app.domain.achievements import check_and_unlock
-from app.domain.stats import award_xp, get_stats
+from app.domain.stats import award_xp, count_completed_tasks, get_stats
 
 logger = logging.getLogger(__name__)
 
@@ -157,20 +157,13 @@ class GitHubTaskSyncer:
             self._gestor_db, self._tenant, user_id=user_id, xp=xp, coins=coins
         )
 
-        completed = await gdb_query(
-            self._gestor_db,
-            self._tenant,
-            table="gam_xp_events",
-            select=["id"],
-            where={"user_id": user_id, "source": _SOURCE},
-            limit=200,
-        )
+        task_count = await count_completed_tasks(self._gestor_db, self._tenant, user_id)
         stats = await get_stats(self._gestor_db, self._tenant, user_id)
         unlocked = await check_and_unlock(
             self._gestor_db,
             self._tenant,
             user_id=user_id,
-            task_count=len(completed),
+            task_count=task_count,
             level=stats["level"],
             current_streak=stats["current_streak"],
         )

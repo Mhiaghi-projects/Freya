@@ -118,7 +118,9 @@ async def delete_branch_route(
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
-        await history.delete_branch(workdir, name=branch)
+        await history.delete_branch(
+            workdir, name=branch, default_branch=repo["default_branch"]
+        )
         await repo_store.persist(
             request.app.state.storage, tenant, repo["repo_name"], workdir
         )

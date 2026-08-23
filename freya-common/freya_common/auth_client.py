@@ -19,9 +19,15 @@ from typing import Any
 import httpx
 import jwt
 from jwt import PyJWK
-from jwt.exceptions import PyJWTError
+from jwt.exceptions import ExpiredSignatureError, PyJWTError
 
-from .errors import DependencyUnavailable, Forbidden, Unauthorized
+from .errors import (
+    DependencyUnavailable,
+    Forbidden,
+    TokenExpired,
+    TokenInvalid,
+    Unauthorized,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,15 +138,30 @@ class TokenVerifier:
 
     async def verify(self, token: str) -> dict[str, Any]:
         keys = await self._jwks.keys()
+        kid = jwt.get_unverified_header(token).get("kid")
+        if not self._has_kid(keys, kid):
+            # Sólo un kid ausente del JWKS cacheado justifica saltarse la
+            # caché -- típicamente rotación de claves en `auth`. Cualquier
+            # otro PyJWTError (token vencido, firma inválida, audience/
+            # issuer equivocados) NO lo justifica: antes, cualquiera de
+            # esos casos forzaba igual un fetch en vivo contra `auth` en
+            # CADA petición, anulando de hecho el cacheado de 10 min que
+            # docs/ARCHITECTURE.md §7 documenta como garantía.
+            keys = await self._jwks.keys(force=True)
         try:
             return self._decode(token, keys)
+        except ExpiredSignatureError as exc:
+            # Distinto de "inválido": el contrato (freya-api-contract.md
+            # §1.7) espera que el cliente distinga TOKEN_EXPIRED (→ pedir
+            # refresh) de TOKEN_INVALID (→ reautenticarse desde cero). Antes
+            # ambos caían en el mismo INVALID_CREDENTIALS genérico.
+            raise TokenExpired(f"token expirado: {exc}") from exc
         except PyJWTError as exc:
-            # Un kid nuevo tras rotación merece un reintento con JWKS fresco.
-            keys = await self._jwks.keys(force=True)
-            try:
-                return self._decode(token, keys)
-            except PyJWTError:
-                raise Unauthorized(f"token inválido: {exc}") from exc
+            raise TokenInvalid(f"token inválido: {exc}") from exc
+
+    @staticmethod
+    def _has_kid(keys: dict[str, Any], kid: str | None) -> bool:
+        return any(k.get("kid") == kid for k in keys.get("keys", []))
 
     def _decode(self, token: str, keys: dict[str, Any]) -> dict[str, Any]:
         # PyJWT no acepta un JWKS entero como clave: hay que localizar la

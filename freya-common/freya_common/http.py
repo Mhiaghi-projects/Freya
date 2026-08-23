@@ -6,15 +6,12 @@ el formato de error de Freya a excepciones locales.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import httpx
 
 from .context import current_request_id, current_tenant
 from .errors import DependencyUnavailable, FreyaError
-
-logger = logging.getLogger(__name__)
 
 
 class ServiceClient:

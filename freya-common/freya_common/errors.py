@@ -160,7 +160,7 @@ _HTTP_STATUS_CODE = {
 }
 
 
-def install_error_handlers(app: FastAPI, service_name: str) -> None:
+def install_error_handlers(app: FastAPI) -> None:
     """Registra los manejadores que garantizan el sobre único de error."""
 
     @app.exception_handler(FreyaError)
