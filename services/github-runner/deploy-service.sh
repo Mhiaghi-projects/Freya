@@ -40,3 +40,23 @@ trap 'rm -f "$OUT"' EXIT
 sed "s|\.\./infra|${WIN_ROOT}/infra|g" "$SRC" > "$OUT"
 
 docker compose --project-name freya -f "$OUT" --env-file .env up -d --build
+
+# "docker compose up -d" sólo confirma que el contenedor ARRANCÓ, no que
+# se quedó sano -- encontrado en vivo: el deploy roto de storage (antes
+# de este arreglo) salió "Succeeded" en GitHub Actions con el contenedor
+# en crash-loop por detrás. Se espera aquí al healthcheck que cada
+# Dockerfile de Freya ya define, para que un despliegue roto de verdad
+# falle el paso (y el run en GitHub salga en rojo, no en falso verde).
+CONTAINER="freya-$SERVICE"
+for _ in $(seq 1 30); do
+  status="$(docker inspect --format '{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null || echo "sin healthcheck")"
+  case "$status" in
+    healthy) echo "$CONTAINER: sano"; exit 0 ;;
+    unhealthy) echo "$CONTAINER: unhealthy tras el despliegue" >&2; docker logs --tail 30 "$CONTAINER" >&2; exit 1 ;;
+    "sin healthcheck") echo "$CONTAINER: sin healthcheck definido, no se puede verificar"; exit 0 ;;
+  esac
+  sleep 2
+done
+echo "$CONTAINER: no llegó a 'healthy' a tiempo (última: $status)" >&2
+docker logs --tail 30 "$CONTAINER" >&2
+exit 1
