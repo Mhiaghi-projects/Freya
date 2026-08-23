@@ -26,12 +26,17 @@
 set -euo pipefail
 
 SERVICE="${1:?uso: deploy-service.sh <servicio>}"
-WIN_ROOT='D:\Proyectos\Freya'
+# Todo barra normal, nunca "\": confirmado en vivo que el daemon lo
+# resuelve igual de bien, y evita el lío real de escapar backslashes a
+# través de bash + sed (D:\Proyectos\Freya llegó a sed como D:ProyectosFreya
+# -- sed trata "\P"/"\F" en el reemplazo como escapes de un carácter
+# normal y se come la barra, no es un carácter literal sin más).
+WIN_ROOT='D:/Proyectos/Freya'
 SRC="$SERVICE/docker-compose.yml"
 OUT="$SERVICE/.deploy-compose.yml"
 
 trap 'rm -f "$OUT"' EXIT
 
-sed "s|\.\./infra|${WIN_ROOT}\\\\infra|g" "$SRC" > "$OUT"
+sed "s|\.\./infra|${WIN_ROOT}/infra|g" "$SRC" > "$OUT"
 
 docker compose --project-name freya -f "$OUT" --env-file .env up -d --build
