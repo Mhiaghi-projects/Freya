@@ -36,14 +36,16 @@ mkdir -p \
   "$ROOT/infra/certs/$NAME" \
   "$ROOT/infra/secrets/$NAME" \
   "$DEST/migrations" \
-  "$DEST/.github/workflows"
+  "$ROOT/.github/workflows"
 
 # Marcador para que Git conserve el directorio de migraciones vacío.
 [[ -f "$DEST/migrations/.gitkeep" ]] || : > "$DEST/migrations/.gitkeep"
 
 # Workflow de despliegue vía el runner autoalojado (services/github-runner/,
-# docs/DECISIONS.md) -- mismo mecanismo de plantilla que arriba.
+# docs/DECISIONS.md) -- en la RAIZ del repo (monorepo único, "go with
+# mono"): GitHub Actions sólo descubre workflows en .github/workflows/ del
+# repo, nunca en un subdirectorio -- ese fue el bug real la primera vez.
 sed "s/__SERVICE_NAME__/$NAME/g" "$ROOT/templates/github-workflow/deploy.yml" \
-  > "$DEST/.github/workflows/deploy.yml"
+  > "$ROOT/.github/workflows/deploy-$NAME.yml"
 
 echo "Creado $NAME en el puerto $PORT"

@@ -1,10 +1,10 @@
 # Plantilla de workflow de GitHub Actions para un servicio de Freya, en el
 # monorepo único (docs/DECISIONS.md, "go with mono"). Copiar a
-# .github/workflows/deploy-__SERVICE_NAME__.yml en la RAIZ del repo (los
+# .github/workflows/deploy-frontend.yml en la RAIZ del repo (los
 # workflows sólo se descubren ahí -- GitHub Actions nunca mira
 # <servicio>/.github/workflows/, ese fue el bug real que hizo que "no
 # saliera nada en GitHub Actions" la primera vez) y sustituir
-# __SERVICE_NAME__ (mismo mecanismo de plantilla que
+# frontend (mismo mecanismo de plantilla que
 # templates/service-python/, ver infra/scripts/new_service.sh).
 #
 # paths: sólo dispara cuando cambia ESTE servicio -- mismo aislamiento por
@@ -21,12 +21,12 @@
 # Reproduce a mano los mismos pasos que .freya/pipeline.yaml declaraba
 # para el viejo cicd (docs/ROADMAP.md ci-02): lint, test, security_scan.
 
-name: Deploy __SERVICE_NAME__
+name: Deploy frontend
 
 on:
   push:
     branches: [main]
-    paths: ["__SERVICE_NAME__/**"]
+    paths: ["frontend/**"]
 
 jobs:
   deploy:
@@ -44,20 +44,20 @@ jobs:
       - name: Construir imagen de test
         run: |
           docker build --quiet --target dev \
-            --tag freya/__SERVICE_NAME__:test \
-            --file __SERVICE_NAME__/Dockerfile .
+            --tag freya/frontend:test \
+            --file frontend/Dockerfile .
 
       - name: Lint
-        run: docker run --rm --network none freya/__SERVICE_NAME__:test ruff check /srv/app
+        run: docker run --rm --network none freya/frontend:test ruff check /srv/app
 
       - name: Test
-        run: docker run --rm --network none freya/__SERVICE_NAME__:test pytest -v /srv/tests
+        run: docker run --rm --network none freya/frontend:test pytest -v /srv/tests
 
       - name: Security scan
-        run: docker run --rm --env HOME=/tmp freya/__SERVICE_NAME__:test pip-audit
+        run: docker run --rm --env HOME=/tmp freya/frontend:test pip-audit
 
       - name: Desplegar
         run: |
           docker compose --project-name freya \
-            -f __SERVICE_NAME__/docker-compose.yml --env-file .env \
+            -f frontend/docker-compose.yml --env-file .env \
             up -d --build
