@@ -4,6 +4,16 @@ Guía operativa del pipeline de despliegue de Freya. `docs/DECISIONS.md`
 tiene el porqué de cada decisión de diseño; esto es "qué hago cuando
 pasa X" — el día a día de operarlo.
 
+> **Peligro real, encontrado en vivo:** el job `deploy` hace `git fetch` +
+> `git reset --hard origin/main` dentro de `/workspace`, que es
+> `../..:/workspace` montado desde el propio checkout de este repo en el
+> host (`services/github-runner/docker-compose.yml`) -- el MISMO
+> directorio donde trabajas normalmente, no una copia aislada. Cualquier
+> cambio sin commitear que tengas ahí cuando un job `deploy` corre
+> (aunque sea de otro servicio) se pierde sin aviso. Commitea (aunque sea
+> a una rama aparte) antes de dejar el repo con cambios sueltos si hay
+> algún push reciente que pueda disparar un deploy.
+
 ## El pipeline en una frase
 
 Un `git push` a `main` que toca `<servicio>/**` dispara

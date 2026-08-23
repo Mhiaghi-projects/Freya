@@ -33,6 +33,12 @@ router = APIRouter(tags=["auth"])
 async def sign_up(body: SignUpRequest, request: Request) -> dict:
     gestor_db = request.app.state.gestor_db
     tenant = current_tenant()
+    # Mismo limitador que /sign-in (password_rate_limiter), clave distinta
+    # ("signup:" de prefijo) para que agotar el cupo de alta de cuentas no
+    # bloquee de paso los intentos de login legítimos de ese email, ni al
+    # revés -- sin throttling aquí, nada frenaba la creación masiva
+    # automatizada de cuentas.
+    request.app.state.password_rate_limiter.check(f"signup:{tenant}:{body.email}")
     return await create_user(
         gestor_db,
         tenant,
