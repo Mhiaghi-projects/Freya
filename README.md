@@ -300,6 +300,8 @@ fix-eol` lo corrige.
 
 - [Arquitectura](docs/ARCHITECTURE.md) — servicios, redes, puertos, tecnología
 - [Convenciones](docs/CONVENTIONS.md) — API, errores, logs, contenedores, datos
+- [Runbook de despliegue](docs/RUNBOOK.md) — de `git push` a corriendo en tu PC, vía GitHub Actions
+- [Decisiones](docs/DECISIONS.md) — porqués de diseño, encontrados en vivo
 - [Roadmap](docs/ROADMAP.md) — las 11 fases y sus criterios de salida
 - [Backlog](projects/README.md) — 90 tasks con dificultad
 

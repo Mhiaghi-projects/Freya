@@ -377,3 +377,108 @@ mismo patrón de healthcheck basado en un proceso Python nuevo por
 chequeo. Se recuperó solo (no llegó a acumular un streak de fallos como
 Traefik) y no formaba parte de este batch de deploys, así que no se tocó
 -- si vuelve a flaquear, aplicar el mismo diagnóstico.
+
+---
+
+## 2026-08-23 — Auditoría completa del proyecto: ~30 bugs reales corregidos
+
+Pedido explícito del usuario: "haz todo lo que necesites y puedas hacer...
+Necesito que te fijes en la seguridad." Auditoría en paralelo (5 agentes,
+lectura completa de cada servicio, sin tocar código) sobre los 11
+servicios Python del monorepo, seguida de corrección uno por uno y
+verificación (lint + pytest limpios en los 11, stack completo
+redesplegado y sano).
+
+**Hallazgos de mayor impacto** (ver el comentario junto a cada fix para
+el detalle exacto):
+- `auth`: bypass real de aislamiento por tenant -- `admin_principal`/
+  `user_principal` (`app/deps.py`) sólo comprobaban `role`, nunca
+  `tenant_id` del JWT contra `X-Tenant-Context`. Un token admin de un
+  tenant servía igual de bien contra cualquier otro.
+- `storage`: IDOR en `get_object_metadata` (un `versionId` de otro objeto
+  no se validaba contra el `object_id` del recurso pedido); `DELETE
+  ?force=true` de un bucket no borraba objetos/blobs de verdad, dejándolos
+  reaparecer si el nombre del bucket se reutilizaba.
+- `cicd`: una excepción inesperada del runner dejaba `ci_runs` en
+  "running" para siempre, sin forma de saber que la ejecución murió.
+- `project-manager`: arrastrar una task a otra columna en un punto
+  concreto descartaba la posición pedida (siempre al final).
+- `freya-common`: cualquier JWT inválido/vencido forzaba un fetch en vivo
+  del JWKS contra `auth`, anulando de hecho el cacheado de 10 min
+  documentado en `docs/ARCHITECTURE.md` §7; el rate limiter no purgaba
+  nunca claves vistas una sola vez (fuga de memoria proporcional a IPs/
+  tenants vistos en la vida del proceso).
+- `secrets`: borrar la versión "actual" de un secreto dejaba
+  `current_version` apuntando a una versión ya borrada, bloqueando toda
+  lectura por defecto aunque quedaran versiones anteriores válidas.
+- `gamification`: achievements/goals sub-contaban tareas completadas --
+  cada sincronizador (project-manager, GitHub Issues) sólo veía su propia
+  fuente en `gam_xp_events`.
+
+**No arreglado, a propósito, documentado en su lugar:**
+- `storage`: el flag `encryption` de un bucket se acepta y guarda pero no
+  cifra nada -- implementar cifrado real en reposo es una pieza de
+  seguridad que merece su propio diseño (gestión de claves, rotación), no
+  un efecto colateral de un barrido de bugs. Ver `storage/README.md`.
+- `auth`: no hay forma de desactivar un usuario o cambiarle el rol sin
+  borrado duro -- gap de funcionalidad, no bug; nadie lo ha pedido
+  todavía.
+
+Commit `f952c9f` (39 archivos). Detalle completo de cada hallazgo, con
+archivo/línea y escenario de fallo concreto, en el historial de esta
+conversación -- los comentarios junto a cada fix en el código son la
+referencia permanente.
+
+---
+
+## 2026-08-23 — Pipeline de deploy: dos jobs, no uno (check en GitHub, deploy en el PC)
+
+**Pedido del usuario:** "haz que el primer runbook se ejecute en github
+aprovechando todas las funciones de github como check code, y luego se
+ejecute el pipeline que deploya en mi pc."
+
+**Decisión:** cada `deploy-<servicio>.yml` pasa de un job único (todo en
+el runner autoalojado, incluido lint/test/security_scan) a dos jobs
+encadenados con `needs:`:
+1. `check` -- en `ubuntu-latest` (runner de GitHub, efímero, gratis para
+   este repo público). `actions/checkout` real, build de la imagen `dev`,
+   lint, test, `pip-audit`. Nunca toca el PC del usuario.
+2. `deploy` -- sólo arranca si `check` pasó. Sigue en el runner
+   autoalojado (`services/github-runner/`), ahora sólo hace `git fetch` +
+   `reset --hard` y `deploy-service.sh`.
+
+**Por qué:** antes, lint/test/security_scan corrían en el mismo runner
+autoalojado que hace el deploy -- "CI" de nombre, pero en la práctica
+todo ejecutaba en el propio PC del usuario, incluido código que podía
+estar roto. Con `needs: check`, código que no pasa esas comprobaciones
+JAMÁS llega a construirse ni ejecutarse localmente; las comprobaciones en
+sí corren en infraestructura desechable de GitHub.
+
+**También activado (funciones nativas de GitHub, gratis en un repo
+público, vía API -- `gh api -X PATCH repos/.../ --f security_and_analysis...`):**
+secret scanning + push protection (rechaza un push con un secreto
+reconocible antes de que exista en el historial), Dependabot security
+updates (PR automático al publicarse un CVE de una dependencia usada).
+Nuevos: `.github/workflows/codeql.yml` (análisis semántico del código
+propio -- inyección, path traversal, etc. -- en cada push y semanalmente)
+y `.github/dependabot.yml` (PR semanal de versiones desactualizadas, uno
+por servicio). Ninguno de estos bloquea el job `deploy` hoy -- acoplar el
+deploy a CodeQL exigiría esperar un workflow aparte (`workflow_run`), más
+complejidad de la que pide un repo de un solo desarrollador real; revisar
+alertas queda manual por ahora.
+
+**También añadido:** `workflow_dispatch: {}` en cada workflow -- permite
+re-lanzar el mismo commit desde la pestaña Actions sin necesitar un push
+nuevo (botón "Run workflow").
+
+Plantilla actualizada en `templates/github-workflow/deploy.yml` (para que
+`infra/scripts/new_service.sh` genere el patrón de dos jobs automáticamente
+en cualquier servicio nuevo); los 8 workflows existentes regenerados desde
+ella. Detalle operativo completo -- cómo verificar un deploy, redesplegar
+sin cambio de código, el patrón de "unhealthy transitorio" bajo carga,
+rollback -- en `docs/RUNBOOK.md`, nuevo.
+
+**No tocado, a propósito:** `git`, `project-manager`, `cicd` siguen sin
+workflow propio -- decisión ya tomada de no migrarlos a GitHub Actions
+hasta decomisionarlos (ver entrada de migración a GitHub arriba).
+-- si vuelve a flaquear, aplicar el mismo diagnóstico.

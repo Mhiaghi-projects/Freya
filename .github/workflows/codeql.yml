@@ -1,0 +1,50 @@
+# Análisis semántico de seguridad (CodeQL) sobre todo el monorepo Python.
+#
+# Distinto de "Security scan" (pip-audit) en cada deploy-<servicio>.yml:
+# pip-audit mira vulnerabilidades CONOCIDAS en dependencias de terceros;
+# CodeQL analiza el CÓDIGO PROPIO en busca de patrones de vulnerabilidad
+# (inyección SQL, path traversal, SSRF, uso inseguro de criptografía,
+# etc.) sin necesidad de ejecutarlo -- gratis para repos públicos como
+# éste (Mhiaghi-projects/Freya), sin licencia de GitHub Advanced Security.
+#
+# Un solo job para todo el monorepo: el extractor de Python de CodeQL no
+# necesita instalar dependencias ni construir nada por servicio (a
+# diferencia de compilar un lenguaje tipado), así que no hace falta
+# repetir esto once veces como los workflows de deploy-<servicio>.yml.
+#
+# Resultados en la pestaña Security > Code scanling alerts del repo, no
+# aquí -- este workflow sólo sube los hallazgos, no bloquea el deploy
+# (deploy-<servicio>.yml sigue dependiendo sólo de lint/test/security_scan
+# en su propio job "check"; acoplar el deploy a CodeQL exigiría esperar a
+# un workflow aparte, más complejidad de la que pide hoy este repo de un
+# solo desarrollador real).
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Detecta vulnerabilidades nuevas en el propio código (no sólo en
+    # dependencias) aunque nadie toque el repo esa semana.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"

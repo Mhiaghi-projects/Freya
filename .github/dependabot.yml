@@ -1,0 +1,59 @@
+# Actualizaciones de dependencias automáticas (PRs semanales) -- un
+# "directory" por servicio porque cada uno tiene su propio pyproject.toml
+# independiente (docs/DECISIONS.md, "go with mono": un monorepo, pero
+# dependencias por servicio, no un requirements.txt único compartido).
+# Separado de dependabot_security_updates (ya activado por API en el
+# repo, arreglos de CVEs concretos tan pronto se publican) -- esto es el
+# barrido rutinario de "hay una versión nueva", no ligado a una
+# vulnerabilidad.
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /auth
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /cicd
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /freya-common
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /frontend
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /gamification
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /gestor-db
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /gestor-monitoring
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /git
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /project-manager
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /secrets
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /storage
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -13,21 +13,29 @@
 # freya-common no estaría al lado en un checkout aislado de un solo
 # servicio).
 #
-# No usa actions/checkout: el runner autoalojado (services/github-runner/)
-# tiene el propio monorepo montado en /workspace, en el mismo sitio que
-# usa freya.ps1 -- infra/certs e infra/secrets sólo existen ahí, en el
-# host, nunca en un checkout de CI aislado.
+# Dos jobs, no uno (docs/RUNBOOK.md tiene el detalle operativo completo):
 #
-# Reproduce a mano los mismos pasos que .freya/pipeline.yaml declaraba
-# para el viejo cicd (docs/ROADMAP.md ci-02): lint, test, security_scan.
+#   1. "check" -- corre en un runner de GitHub (ubuntu-latest, efímero, de
+#      pago por GitHub, nunca toca el PC del usuario). checkout de verdad
+#      (actions/checkout), build de la imagen "dev", lint, test, security
+#      scan (pip-audit). Reproduce a mano los mismos pasos que
+#      .freya/pipeline.yaml declaraba para el viejo cicd (docs/ROADMAP.md
+#      ci-02).
 #
-# El paso "Desplegar" usa services/github-runner/deploy-service.sh, no
-# "docker compose up" directo -- Docker-outside-of-Docker gotcha real
-# encontrado en vivo: las rutas relativas de "volumes:" del
-# docker-compose.yml del servicio (../infra/certs/..., ../infra/secrets/...)
-# las resuelve el DAEMON del host, no este contenedor, así que
-# /workspace/... no significa nada para él y monta un directorio vacío en
-# vez de los certificados reales. Ver ese script para el porqué exacto.
+#   2. "deploy" -- needs: check, así que si el paso 1 falla esto ni
+#      arranca: código que no pasa lint/test/security_scan nunca llega a
+#      ejecutarse en el PC del usuario. Corre en el runner autoalojado
+#      (services/github-runner/), que tiene el propio monorepo montado en
+#      /workspace, en el mismo sitio que usa freya.ps1 -- infra/certs e
+#      infra/secrets sólo existen ahí, en el host, nunca en el checkout
+#      efímero del job "check". Usa services/github-runner/deploy-service.sh,
+#      no "docker compose up" directo -- Docker-outside-of-Docker gotcha
+#      real encontrado en vivo: las rutas relativas de "volumes:" del
+#      docker-compose.yml del servicio (../infra/certs/...,
+#      ../infra/secrets/...) las resuelve el DAEMON del host, no este
+#      contenedor, así que /workspace/... no significa nada para él y
+#      monta un directorio vacío en vez de los certificados reales. Ver
+#      ese script para el porqué exacto.
 
 name: Deploy frontend
 
@@ -35,19 +43,16 @@ on:
   push:
     branches: [main]
     paths: ["frontend/**"]
+  # Para re-desplegar el mismo commit sin un cambio de código (ver
+  # docs/RUNBOOK.md, "Desplegar sin un cambio de código") -- botón "Run
+  # workflow" en la pestaña Actions de GitHub.
+  workflow_dispatch: {}
 
 jobs:
-  deploy:
-    runs-on: [self-hosted, freya]
-    defaults:
-      run:
-        working-directory: /workspace
-
+  check:
+    runs-on: ubuntu-latest
     steps:
-      - name: Actualizar el checkout local
-        run: |
-          git fetch origin main
-          git reset --hard origin/main
+      - uses: actions/checkout@v4
 
       - name: Construir imagen de test
         run: |
@@ -63,6 +68,19 @@ jobs:
 
       - name: Security scan
         run: docker run --rm --env HOME=/tmp freya/frontend:test pip-audit
+
+  deploy:
+    needs: check
+    runs-on: [self-hosted, freya]
+    defaults:
+      run:
+        working-directory: /workspace
+
+    steps:
+      - name: Actualizar el checkout local
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
 
       - name: Desplegar
         run: bash services/github-runner/deploy-service.sh frontend
