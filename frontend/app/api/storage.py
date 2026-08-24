@@ -3,10 +3,11 @@ storage/app/api/{buckets,objects}.py."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from freya_common import NotFound, ServiceClient
 from pydantic import BaseModel
 
@@ -19,6 +20,13 @@ StorageClient = Annotated[ServiceClient, Depends(client_dep("storage"))]
 # cicd...), no datos de una persona -- fuera del panel por completo, no
 # sólo ocultos de la lista: acceder por URL directa tampoco funciona.
 _INTERNAL_BUCKETS = {"git", "secrets", "backups", "logs", "artifacts"}
+
+# Subidas/descargas de archivos pesados (pedido explícito del usuario) no
+# caben en el timeout por defecto de ServiceClient (30s, pensado para
+# llamadas de API normales) -- una hora es margen de sobra incluso para un
+# archivo grande en una conexión lenta, sin dejarlo colgado para siempre
+# si algo se atasca de verdad.
+_TRANSFER_TIMEOUT_SECONDS = 3600.0
 
 
 def _assert_visible(bucket: str) -> None:
@@ -81,7 +89,10 @@ async def upload_object(
     if content_type := request.headers.get("content-type"):
         headers["Content-Type"] = content_type
     upstream = await client.put(
-        f"/storage/{bucket}/{key}", content=request.stream(), headers=headers
+        f"/storage/{bucket}/{key}",
+        content=request.stream(),
+        headers=headers,
+        timeout=_TRANSFER_TIMEOUT_SECONDS,
     )
     return ServiceClient.data(upstream)
 
@@ -93,14 +104,31 @@ async def delete_object(bucket: str, key: str, client: StorageClient) -> None:
 
 
 @router.get("/{bucket}/{key:path}")
-async def download_object(bucket: str, key: str, client: StorageClient) -> Response:
+async def download_object(
+    bucket: str, key: str, client: StorageClient
+) -> StreamingResponse:
     """Descarga directa: los bytes del objeto tal cual, no el sobre JSON --
     igual que hace storage consigo mismo (X-Freya-No-Envelope), porque el
-    contenido subido puede resultar ser JSON sin ser una respuesta de esta API."""
+    contenido subido puede resultar ser JSON sin ser una respuesta de esta
+    API. En streaming real (nunca upstream.content: eso leería el archivo
+    entero a memoria antes de mandar el primer byte -- justo lo que un
+    archivo pesado no puede permitirse con 256M de límite de contenedor)."""
     _assert_visible(bucket)
-    upstream = await client.get(f"/storage/{bucket}/{key}")
-    response = Response(
-        content=upstream.content, media_type=upstream.headers.get("content-type")
+    stream_cm = client.stream(
+        "GET", f"/storage/{bucket}/{key}", timeout=_TRANSFER_TIMEOUT_SECONDS
     )
-    response.headers["X-Freya-No-Envelope"] = "1"
-    return response
+    upstream = await stream_cm.__aenter__()
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await stream_cm.__aexit__(None, None, None)
+
+    headers = {"X-Freya-No-Envelope": "1"}
+    if content_length := upstream.headers.get("content-length"):
+        headers["Content-Length"] = content_length
+    return StreamingResponse(
+        body(), media_type=upstream.headers.get("content-type"), headers=headers
+    )

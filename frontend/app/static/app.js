@@ -207,18 +207,43 @@ route("git", async (content, [repoId]) => {
 // "users/{tu_id}/...". Las carpetas no son un concepto real de storage --
 // se simulan con "/" en la clave, y una carpeta vacía se representa con un
 // objeto ".keep" (mismo truco que cualquier consola de S3).
-async function driveUpload(key, file) {
-  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  const res = await fetch(`/api/storage/users/${encodedKey}`, {
-    method: "PUT",
-    credentials: "same-origin",
-    headers: { "Content-Type": file.type || "application/octet-stream" },
-    body: file,
+function driveUpload(key, file, onProgress) {
+  // XMLHttpRequest, no fetch: es la única API del navegador que reporta
+  // progreso de SUBIDA (xhr.upload.onprogress) -- fetch no lo expone.
+  return new Promise((resolve, reject) => {
+    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `/api/storage/users/${encodedKey}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) { resolve(); return; }
+      let message = `HTTP ${xhr.status}`;
+      try {
+        const envelope = JSON.parse(xhr.responseText);
+        if (envelope && envelope.error) message = envelope.error.message;
+      } catch { /* respuesta no-JSON */ }
+      reject(new Error(message));
+    });
+    xhr.addEventListener("error", () => reject(new Error("Error de red durante la subida")));
+    xhr.send(file);
   });
-  if (!res.ok) {
-    const envelope = await res.json().catch(() => null);
-    throw new Error(envelope && envelope.error ? envelope.error.message : `HTTP ${res.status}`);
-  }
+}
+
+function driveDownload(key) {
+  // <a download> + click programático: dispara la descarga nativa del
+  // navegador (con su propia barra de progreso) sin navegar la pestaña --
+  // funciona igual para uno o para varios archivos seguidos.
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  const a = document.createElement("a");
+  a.href = `/api/storage/users/${encodedKey}`;
+  a.download = key.split("/").pop();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 route("storage", async (content, pathParts) => {
@@ -238,10 +263,17 @@ route("storage", async (content, pathParts) => {
   const folderInput = el("input", { type: "text", placeholder: "nombre de la carpeta", id: "nf-name" });
   const folderForm = el("form", { class: "inline-form" }, folderInput,
     el("button", { class: "btn btn-secondary", type: "submit" }, "Nueva carpeta"));
-  const fileInput = el("input", { type: "file", id: "up-file", required: "true" });
+  const fileInput = el("input", { type: "file", id: "up-file", required: "true", multiple: "true" });
   const uploadForm = el("form", { class: "inline-form" }, fileInput,
-    el("button", { class: "btn", type: "submit" }, "Subir archivo"));
-  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm));
+    el("button", { class: "btn", type: "submit" }, "Subir archivos"));
+  const downloadSelectedBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Descargar seleccionados");
+  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm, downloadSelectedBtn));
+
+  const progressLabel = el("span", { class: "muted" });
+  const progressBar = el("progress", { max: "100", value: "0" });
+  const progressWrap = el("div", { class: "upload-progress hidden" }, progressLabel, progressBar);
+  content.appendChild(progressWrap);
+
   const toolbarError = el("p", { class: "error hidden" });
   content.appendChild(toolbarError);
   function showError(err) {
@@ -250,7 +282,7 @@ route("storage", async (content, pathParts) => {
   }
 
   const table = el("table", {},
-    el("thead", {}, el("tr", {}, el("th", {}, "Nombre"), el("th", {}, "Tamaño"), el("th", {}, "Modificado"), el("th", {}, ""))),
+    el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Nombre"), el("th", {}, "Tamaño"), el("th", {}, "Modificado"), el("th", {}, ""))),
     el("tbody", {}),
   );
   const emptyMsg = el("p", { class: "empty hidden" }, "Carpeta vacía.");
@@ -288,6 +320,7 @@ route("storage", async (content, pathParts) => {
     for (const name of [...folders].sort()) {
       const target = [...decodedParts, name].map(encodeURIComponent).join("/");
       tbody.appendChild(el("tr", { class: "clickable", onclick: () => { location.hash = `#/storage/${target}`; } },
+        el("td", {}, ""),
         el("td", {}, `📁 ${name}`), el("td", {}, ""), el("td", {}, ""),
         el("td", {}, el("button", {
           class: "btn btn-danger", type: "button",
@@ -301,11 +334,14 @@ route("storage", async (content, pathParts) => {
     }
     for (const f of files.filter((f) => f.name !== ".keep").sort((a, b) => a.name.localeCompare(b.name))) {
       const fullKey = `${prefix}${f.name}`;
+      const checkbox = el("input", { type: "checkbox", class: "file-select" });
+      checkbox.dataset.key = fullKey;
       const encodedKey = fullKey.split("/").map(encodeURIComponent).join("/");
-      tbody.appendChild(el("tr", {}, el("td", {}, `📄 ${f.name}`), el("td", {}, String(f.size ?? "")),
+      tbody.appendChild(el("tr", {}, el("td", {}, checkbox),
+        el("td", {}, `📄 ${f.name}`), el("td", {}, String(f.size ?? "")),
         el("td", {}, f.last_modified || f.updated_at || ""),
         el("td", {},
-          el("a", { href: `/api/storage/users/${encodedKey}`, target: "_blank", class: "btn btn-secondary" }, "Descargar"),
+          el("button", { class: "btn btn-secondary", type: "button", onclick: () => driveDownload(fullKey) }, "Descargar"),
           el("button", {
             class: "btn btn-danger", type: "button",
             onclick: async () => {
@@ -317,6 +353,13 @@ route("storage", async (content, pathParts) => {
     }
   }
   await load();
+
+  downloadSelectedBtn.addEventListener("click", () => {
+    toolbarError.classList.add("hidden");
+    const keys = [...table.querySelectorAll(".file-select:checked")].map((cb) => cb.dataset.key);
+    if (!keys.length) { showError(new Error("Selecciona al menos un archivo para descargar")); return; }
+    for (const key of keys) driveDownload(key);
+  });
 
   folderForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -333,12 +376,23 @@ route("storage", async (content, pathParts) => {
   uploadForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     toolbarError.classList.add("hidden");
-    const file = fileInput.files[0];
+    const files = [...fileInput.files];
+    if (!files.length) return;
+    progressWrap.classList.remove("hidden");
     try {
-      await driveUpload(`${prefix}${file.name}`, file);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        progressLabel.textContent = `Subiendo ${file.name} (${i + 1}/${files.length})`;
+        progressBar.value = 0;
+        await driveUpload(`${prefix}${file.name}`, file, (frac) => { progressBar.value = frac * 100; });
+      }
       uploadForm.reset();
       await load();
-    } catch (err) { showError(err); }
+    } catch (err) {
+      showError(err);
+    } finally {
+      progressWrap.classList.add("hidden");
+    }
   });
 });
 

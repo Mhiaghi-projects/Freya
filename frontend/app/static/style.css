@@ -391,6 +391,23 @@ tr.clickable:hover { background: var(--panel-2); }
   font-size: 13px;
 }
 
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -8px 0 18px;
+  font-size: 13px;
+}
+
+.upload-progress progress {
+  flex: 1;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.upload-progress progress::-webkit-progress-bar { background: var(--panel-2); border-radius: 4px; }
+.upload-progress progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
+
 .grant-check {
   display: flex;
   align-items: center;

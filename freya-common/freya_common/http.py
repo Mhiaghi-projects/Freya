@@ -6,6 +6,8 @@ el formato de error de Freya a excepciones locales.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -69,6 +71,39 @@ class ServiceClient:
         if response.status_code >= 400:
             raise self._translate(response)
         return response
+
+    @asynccontextmanager
+    async def stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        tenant: str | None = None,
+        timeout: float = 30.0,
+        headers: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[httpx.Response]:
+        """Como request(), pero nunca lee el cuerpo entero a memoria -- para
+        proxys de archivos pesados (docs/DECISIONS.md, "google drive para
+        usuarios"): request() usa self._http.request(), que sí lee todo el
+        cuerpo antes de devolver el control. El caller itera
+        response.aiter_bytes() dentro del `async with`; salir de él cierra
+        la conexión aunque no se haya leído todo."""
+        url = f"{self._base_url}{path}"
+        merged = {**(headers or {}), **await self._headers(tenant)}
+        try:
+            async with self._http.stream(
+                method, url, headers=merged, timeout=timeout, **kwargs
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    raise self._translate(response)
+                yield response
+        except httpx.HTTPError as exc:
+            raise DependencyUnavailable(
+                f"{self._base_url} no responde: {exc}",
+                details={"url": url, "method": method},
+            ) from exc
 
     def _translate(self, response: httpx.Response) -> FreyaError:
         """Convierte el error remoto (sobre {success:false, error}) en una

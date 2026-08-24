@@ -17,10 +17,15 @@ class Settings(BaseServiceSettings):
     # metadatos (docs/ROADMAP.md Fase 4).
     data_dir: Path = Path("/data")
 
-    # Tope duro por subida: con 256 MB de memoria por contenedor, cargar el
-    # cuerpo entero en memoria (no hay streaming todavía) exige un límite
-    # bajo. Multipart upload (§5.8) queda pendiente precisamente para esto.
-    max_upload_bytes: int = 50 * 1024 * 1024  # 50 MiB
+    # blob_store.write ya escribe en streaming, por chunks de 1 MiB, nunca
+    # carga el cuerpo entero en memoria -- el límite de 50 MiB de antes
+    # databa de cuando eso no era cierto (comentario desde entonces
+    # obsoleto). El tope real hoy es la cuota del bucket
+    # (default_quota_bytes), no la memoria del contenedor -- este límite
+    # por archivo sólo evita que un solo archivo agote la cuota entera de
+    # golpe (pedido explícito del usuario: "debe dejarme subir archivos
+    # pesados").
+    max_upload_bytes: int = 5 * 1024 * 1024 * 1024  # 5 GiB
 
     default_quota_bytes: int = 10 * 1024 * 1024 * 1024  # 10 GiB
     default_max_versions: int = 5
