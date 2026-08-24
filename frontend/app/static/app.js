@@ -373,26 +373,46 @@ route("storage", async (content, pathParts) => {
     } catch (err) { showError(err); }
   });
 
-  uploadForm.addEventListener("submit", async (e) => {
+  // Cola real: si se elige otro lote de archivos mientras el anterior aún
+  // sube, se apilan aquí en vez de perderse -- antes cada submit disparaba
+  // su propio for suelto, y un segundo submit mientras el primero seguía
+  // corriendo lanzaba un segundo loop en paralelo peleando por la misma
+  // barra de progreso (parecía que el archivo nuevo "reemplazaba" al
+  // anterior en vez de sumarse a la cola).
+  const uploadQueue = [];
+  let uploadWorkerActive = false;
+
+  async function processUploadQueue() {
+    if (uploadWorkerActive) return;
+    uploadWorkerActive = true;
+    progressWrap.classList.remove("hidden");
+    try {
+      while (uploadQueue.length) {
+        const { key, file } = uploadQueue[0];
+        progressLabel.textContent = `Subiendo ${file.name} (quedan ${uploadQueue.length})`;
+        progressBar.value = 0;
+        try {
+          await driveUpload(key, file, (frac) => { progressBar.value = frac * 100; });
+        } catch (err) {
+          showError(err);
+        }
+        uploadQueue.shift();
+      }
+      await load();
+    } finally {
+      progressWrap.classList.add("hidden");
+      uploadWorkerActive = false;
+    }
+  }
+
+  uploadForm.addEventListener("submit", (e) => {
     e.preventDefault();
     toolbarError.classList.add("hidden");
     const files = [...fileInput.files];
     if (!files.length) return;
-    progressWrap.classList.remove("hidden");
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        progressLabel.textContent = `Subiendo ${file.name} (${i + 1}/${files.length})`;
-        progressBar.value = 0;
-        await driveUpload(`${prefix}${file.name}`, file, (frac) => { progressBar.value = frac * 100; });
-      }
-      uploadForm.reset();
-      await load();
-    } catch (err) {
-      showError(err);
-    } finally {
-      progressWrap.classList.add("hidden");
-    }
+    for (const file of files) uploadQueue.push({ key: `${prefix}${file.name}`, file });
+    uploadForm.reset();
+    processUploadQueue();
   });
 });
 
