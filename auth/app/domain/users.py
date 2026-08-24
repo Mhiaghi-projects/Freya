@@ -25,14 +25,14 @@ from app.domain.passwords import hash_secret, verify_secret
 # SERVICE_GRANTS) -- mismo patrón que ya usa service_accounts.permissions,
 # una lista libre en vez de una enumeración cerrada de roles.
 ROLE_PERMISSIONS: dict[str, list[str]] = {
-    # read:storage/write:storage: cualquier usuario tiene su propio espacio
-    # personal en el bucket reservado "users" (docs/ARCHITECTURE.md §2.1) --
-    # storage aplica el aislamiento por dueño en su propia API
-    # (storage/app/api/objects.py:_check_user_bucket_access), nunca por el
-    # alcance del permiso: éste sólo abre la puerta, no concede acceso a
-    # los datos de otro usuario. Por eso está en la base de "user" y no es
-    # parte de SERVICE_GRANTS -- no es un acceso opcional por servicio.
-    "user": ["read:self", "update:self", "read:storage", "write:storage"],
+    # read:storage/write:storage NO está en la base de "user" a propósito
+    # (pedido explícito del usuario, sobre un diseño anterior donde todo
+    # "user" lo tenía automático): write:storage da acceso a cualquier
+    # bucket que no sea "users" (docs/ARCHITECTURE.md §2.1) sin ninguna
+    # noción de dueño -- ni siquiera el espacio personal debe quedar
+    # accesible sin que un admin lo conceda explícitamente. Ahora es un
+    # grant más, igual que git/cicd/monitoring (ver SERVICE_GRANTS).
+    "user": ["read:self", "update:self"],
     "admin": [
         "read:self", "update:self", "admin:users",
         "read:database", "write:database",
@@ -54,6 +54,7 @@ SERVICE_GRANTS: dict[str, list[str]] = {
     "cicd": ["read:cicd", "write:cicd"],
     "monitoring": ["read:monitoring", "write:monitoring"],
     "project-manager": ["read:project-manager", "write:project-manager"],
+    "storage": ["read:storage", "write:storage"],
 }
 
 _GRANTABLE_PERMISSIONS = {p for perms in SERVICE_GRANTS.values() for p in perms}
