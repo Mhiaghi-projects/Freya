@@ -19,6 +19,7 @@ class Settings(BaseServiceSettings):
     cicd_url: str = "https://freya-cicd:8007"
     gestor_monitoring_url: str = "https://freya-gestor-monitoring:8008"
     gamification_url: str = "https://freya-gamification:8009"
+    athenea_url: str = "https://freya-athenea:8010"
 
     # Cookies de sesión: el navegador nunca ve el JWT -- sólo frontend, que
     # lo reenvía como Authorization al hacer de gateway (app/infra/gateway.py).

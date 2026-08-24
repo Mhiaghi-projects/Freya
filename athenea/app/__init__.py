@@ -1,0 +1,1 @@
+"""Servicio athenea de Freya."""

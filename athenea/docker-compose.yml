@@ -1,0 +1,72 @@
+# Plantilla de compose de un servicio de Freya.
+# Se lanza desde la raíz del monorepo:
+#   docker compose -f athenea/docker-compose.yml up -d
+
+services:
+  athenea:
+    build:
+      context: ..
+      dockerfile: athenea/Dockerfile
+      # Sin esto, Docker construye la última etapa del Dockerfile (`dev`,
+      # cuyo CMD es pytest) en vez de `runtime`.
+      target: runtime
+    image: freya/athenea:dev
+    container_name: freya-athenea
+    restart: unless-stopped
+
+    environment:
+      FREYA_SERVICE_NAME: athenea
+      FREYA_PORT: "8010"
+      FREYA_LOG_LEVEL: "${FREYA_LOG_LEVEL:-info}"
+      FREYA_ENVIRONMENT: "${FREYA_ENVIRONMENT:-dev}"
+      FREYA_AUTH_ENABLED: "${FREYA_AUTH_ENABLED:-true}"
+      FREYA_AUTH_URL: "https://freya-auth:8002"
+      FREYA_GESTOR_DB_URL: "https://freya-gestor-db:8001"
+      FREYA_SECRETS_URL: "https://freya-secrets:8003"
+      # Sin FREYA_STORAGE_URL a propósito: Athenea nunca habla con storage
+      # directo, sólo a través del gateway de frontend (/api/storage) --
+      # sin esta variable, el servicio ni siquiera podría construir un
+      # cliente hacia storage aunque el código lo intentara.
+      FREYA_API_KEY: "athenea"
+
+    volumes:
+      - ../infra/certs/athenea:/run/certs:ro
+      - ../infra/secrets/athenea:/run/secrets:ro
+
+    networks:
+      - freya-mesh
+
+    # Sin puertos publicados: sólo frontend habla con el exterior.
+
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+          # CIS Docker Benchmark 5.28, mismo motivo que el resto de
+          # servicios propios (ver docs/DECISIONS.md).
+          pids: 128
+
+    labels:
+      freya.service: "athenea"
+      freya.metrics.port: "8010"
+      freya.metrics.path: "/metrics"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  freya-mesh:
+    external: true
