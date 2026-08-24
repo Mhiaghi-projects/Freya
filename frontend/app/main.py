@@ -76,6 +76,7 @@ app = create_app(
     title="Freya frontend",
     lifespan=lifespan,
     readiness_checks={"auth": check_auth},
+    expose_docs=False,
 )
 
 app.add_middleware(

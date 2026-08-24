@@ -31,11 +31,15 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     async def fake_get_object_metadata(*_args: object, **_kwargs: object) -> dict:
         return _META
 
+    async def fake_read(*_args: object, **_kwargs: object):
+        yield _BODY
+
+    async def fake_read_range(*_args: object, **_kwargs: object):
+        yield _BODY[:5]
+
     monkeypatch.setattr(objects_api, "get_object_metadata", fake_get_object_metadata)
-    monkeypatch.setattr(objects_api.blob_store, "read", lambda *_a, **_kw: _BODY)
-    monkeypatch.setattr(
-        objects_api.blob_store, "read_range", lambda *_a, **_kw: _BODY[:5]
-    )
+    monkeypatch.setattr(objects_api.blob_store, "read", fake_read)
+    monkeypatch.setattr(objects_api.blob_store, "read_range", fake_read_range)
     app.dependency_overrides[authenticated] = lambda: {
         "service": "test",
         "permissions": ["*"],

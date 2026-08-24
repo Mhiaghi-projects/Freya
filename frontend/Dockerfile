@@ -25,7 +25,8 @@ FROM python:3.12-slim AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    MALLOC_ARENA_MAX=2
 
 RUN groupadd -g 10001 freya \
  && useradd -u 10001 -g freya -s /usr/sbin/nologin -M freya

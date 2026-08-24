@@ -47,3 +47,20 @@ def test_ready_incluye_checks(client: TestClient) -> None:
     response = client.get("/ready")
     assert response.status_code in (200, 503)
     assert "checks" in response.json()
+
+
+def test_docs_desactivados_es_el_unico_servicio_alcanzable_desde_fuera(
+    client: TestClient,
+) -> None:
+    # frontend, a diferencia de los otros 9 servicios, sí es alcanzable
+    # desde fuera (vía Traefik) -- /api/v1/docs y /openapi.json regalarían
+    # el mapa completo de rutas internas a cualquiera sin credencial
+    # alguna. Ver freya_common.app.create_app(expose_docs=...).
+    assert client.get("/api/v1/docs").status_code == 404
+    assert client.get("/api/v1/openapi.json").status_code == 404
+
+
+def test_cabeceras_de_seguridad_presentes(client: TestClient) -> None:
+    response = client.get("/health")
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"

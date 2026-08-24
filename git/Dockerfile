@@ -25,7 +25,8 @@ FROM python:3.12-slim AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    MALLOC_ARENA_MAX=2
 
 # git de verdad: éste envuelve `git http-backend`, no reimplementa el
 # protocolo (docs/ARCHITECTURE.md §5). --no-install-recommends para no

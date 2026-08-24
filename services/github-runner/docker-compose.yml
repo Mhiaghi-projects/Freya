@@ -35,8 +35,18 @@ services:
 
     working_dir: /workspace
 
-    # Sin límites de recursos estrictos: aquí corren builds de Docker
-    # (docker compose build), que necesitan CPU/memoria de verdad.
+    # Sin límite de CPU: los "docker build"/"docker compose build" que este
+    # contenedor dispara son Docker-outside-of-Docker (habla con el DAEMON
+    # del host por el socket montado) -- el trabajo pesado de verdad corre
+    # fuera del cgroup de este contenedor, así que limitarlo aquí no lo
+    # protegería ni lo constreñiría. Memoria sí tiene límite: el propio
+    # proceso del runner (.NET) más git/bash/curl medían ~210MiB en uso
+    # real -- 768M da margen de sobra sin dejarlo, como antes, sin techo
+    # (el único servicio de la plataforma que no lo tenía).
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
     labels:
       freya.service: "github-runner"

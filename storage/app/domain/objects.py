@@ -8,6 +8,7 @@ según `versioning` del bucket, nunca recorre todo el historial.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -74,7 +75,9 @@ async def put_object(
     *,
     bucket: str,
     key: str,
-    content: bytes,
+    content_stream: AsyncIterator[bytes],
+    content_length_hint: int,
+    max_bytes: int,
     mime_type: str,
     metadata: str,
     if_none_match: str | None,
@@ -100,17 +103,23 @@ async def put_object(
         if previous:
             bytes_to_free = previous[0]["size"]
 
+    # additional_bytes usa el Content-Length declarado, no el tamaño real
+    # (que streaming no conoce hasta terminar de escribir) -- el tope duro
+    # por objeto (max_bytes, aplicado byte a byte dentro de blob_store.write)
+    # sigue protegiendo el disco aunque el cliente mienta en la cabecera; la
+    # cuota en sí es una estimación honesta, no una garantía adversarial,
+    # razonable para una plataforma de un solo tenant real.
     await check_quota(
         client,
         tenant,
         bucket=bucket,
-        additional_bytes=len(content),
+        additional_bytes=content_length_hint,
         bytes_to_free=bytes_to_free,
     )
 
     version_id = new_id("ver")
-    checksum, size = blob_store.write(
-        data_dir, tenant, bucket, key, version_id, content
+    checksum, size = await blob_store.write(
+        data_dir, tenant, bucket, key, version_id, content_stream, max_bytes=max_bytes
     )
 
     if existing is None:

@@ -550,3 +550,129 @@ personal, no producción a escala), el propio Postgres decide que
 recorrer la tabla entera es más barato que la vuelta extra del índice.
 El índice empieza a ganar solo, sin ningún cambio de código, en cuanto
 el volumen de filas lo justifique -- no hace falta "activarlo" luego.
+
+---
+
+## 2026-08-24 — Vulnerabilidades comunes + optimización de RAM
+
+Pedido del usuario: "haz una lista de las vulnerabilidades mas comunes y
+protege a Freya. Tambien optimizalo a mas no poder. Toda me cuesta 1.36 GB
+ram."
+
+**Vulnerabilidades revisadas (OWASP Top 10), con lo ya arreglado en
+sesiones anteriores marcado como tal:**
+- A01 Broken Access Control -- bypass real de tenant en `auth` e IDOR en
+  `storage`, arreglados en la auditoría de bugs (ver entrada de arriba).
+- A02 Cryptographic Failures -- argon2 (contraseñas), AES-256-GCM real
+  con envelope encryption (secretos), RS256 fijado en JWT, cookies
+  httponly+secure+samesite=lax. Ya revisado, sin hallazgos nuevos.
+- A03 Injection -- SQL siempre parametrizado, identificadores contra
+  regex estricta; subprocess siempre en forma de lista, nunca
+  `shell=True`; sin `eval`/`exec`/`pickle` en todo el repo. Ya revisado.
+- A05 Security Misconfiguration -- **dos hallazgos nuevos reales, ambos
+  arreglados hoy** (detalle abajo): sin cabeceras de seguridad en ninguna
+  respuesta, y `frontend` exponía `/api/v1/docs`+`/openapi.json`
+  públicamente (único servicio alcanzable desde fuera).
+- A06 Vulnerable Components -- `pip-audit` en cada `check` de CI +
+  Dependabot security updates (activado por API, ver entrada del
+  runbook) + Dependabot version updates semanales. Ya cubierto.
+- A07 Auth Failures -- rate limiting en sign-in/sign-up/authenticate-
+  service, refresh tokens con revocación de familia ante reuso. Ya
+  arreglado (sign-up) en el repaso de seguridad anterior.
+- A08 Software/Data Integrity -- pipeline de dos fases (check en GitHub
+  antes de tocar el PC), migraciones con checksum (rechaza reaplicar un
+  fichero con contenido distinto), CodeQL semanal. Ya cubierto.
+- A09 Logging Failures -- logs de acceso con request_id/tenant/caller,
+  historial de health checks. No hay un log de eventos de seguridad
+  aparte (intentos de login fallidos no se marcan de forma especial más
+  allá del log de acceso genérico) -- gap real pero menor, no construido
+  hoy: nadie lo ha pedido y es una pieza nueva, no un fix.
+- A10 SSRF -- `git_repositories.github_mirror_url` se guarda pero nunca
+  se hace fetch de él en el servidor; ningún endpoint acepta una URL de
+  terceros para pedirla server-side. Ya revisado.
+
+**Arreglado hoy -- A05:**
+- `freya-common/freya_common/security_headers.py` (nuevo):
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `Strict-Transport-Security`, y una
+  `Content-Security-Policy` estricta (`default-src 'self'`, sin
+  `unsafe-inline`/`unsafe-eval` -- seguro porque `frontend` no usa
+  scripts ni estilos inline en ningún sitio, confirmado leyendo
+  `index.html` y `app.js`). Universal en los 10 servicios vía
+  `create_app()`, registrado como la más externa de las dos
+  BaseHTTPMiddleware (Security fuera de Envelope) para que sobreviva al
+  reenvuelto de una respuesta JSON.
+- `create_app(..., expose_docs: bool = True)`: `frontend` es el único de
+  los 10 servicios alcanzable desde fuera (vía Traefik) -- antes,
+  `/api/v1/docs`+`/openapi.json` regalaban el mapa completo de rutas
+  internas (admin, storage, git, cicd...) a cualquiera sin credencial,
+  puro reconocimiento gratis. `frontend/app/main.py` ahora pasa
+  `expose_docs=False`; los otros 9 (sin puerto publicado, sólo
+  alcanzables desde dentro de freya-mesh) se quedan como estaban --
+  seguirlos usando para depurar en local no cuesta nada ahí.
+
+**No tocado, a propósito:** imágenes base (`python:3.12-slim`) sin fijar
+a un digest concreto. Fijar a un `@sha256:...` da reproducibilidad exacta
+pero exige actualizarlo a mano para recibir parches de seguridad del
+propio SO -- con Dependabot ya vigilando dependencias Python y `apt`
+dentro de la imagen slim recibiendo parches al reconstruir, fijar el
+digest cambiaría un riesgo (imagen movediza) por otro (parches de SO que
+dejan de llegar solos) sin que nadie lo esté pidiendo.
+
+**Optimización de RAM.** `docker stats` con la plataforma entera arriba:
+~1.45 GiB reales repartidos en 16 contenedores, ninguno con fugas
+obvias salvo uno muy concreto:
+
+- **`storage`: 255.8/256 MiB (99.9% de su límite), con VmSwap real (~84
+  MiB) y VmHWM en 284 MiB.** Causa raíz encontrada, no adivinada:
+  `PUT`/`GET` leían el objeto ENTERO en memoria de golpe
+  (`await request.body()` en la subida, `path.read_bytes()` en la
+  bajada) antes de tocar la red o el disco -- con un objeto grande (tope
+  hoy: 50 MiB), el pico de RSS se dispara y CPython/glibc no le
+  devuelven esa memoria al SO después, así que el proceso se queda
+  "marcado en alto" para siempre aunque vuelva a servir peticiones
+  pequeñas. Mismo patrón de fondo que el fix de memoria de `traefik` de
+  ayer (healthcheck sin margen), pero aquí la causa era la propia lógica
+  de la aplicación, no el límite del contenedor.
+
+  **Arreglo real, no un parche:** `storage/app/domain/blob_store.py`
+  reescrito para streaming de verdad -- `write()` recibe un
+  `AsyncIterator[bytes]` (`request.stream()` de FastAPI) y escribe en
+  trozos de 1 MiB, calculando el sha256 de forma incremental
+  (`hashlib.sha256().update()` por trozo) en vez de sobre el buffer
+  entero; `read()`/`read_range()` son generadores async que leen del
+  disco en trozos de 1 MiB, servidos con `StreamingResponse` en vez de
+  `Response(content=...)`. El pico de memoria de una petición pasa a ser
+  ~1 MiB, sea cual sea el tamaño real del objeto. Efecto colateral de
+  seguridad, no sólo de rendimiento: el tope de 50 MiB (`max_bytes`)
+  ahora se aplica byte a byte MIENTRAS se escribe, no sólo contra la
+  cabecera `Content-Length` -- antes, un cliente con `transfer-encoding:
+  chunked` y sin esa cabecera (o mintiendo en ella) podía hacer que el
+  servidor bufferizara un cuerpo sin límite real antes de rechazarlo.
+  30/30 tests de `storage` pasan (incluida cobertura nueva del corte por
+  `max_bytes` a mitad de escritura, y que no deja un fichero parcial
+  atrás).
+
+- **`MALLOC_ARENA_MAX=2` en los 10 servicios Python.** glibc crea una
+  arena de malloc por hilo por defecto, lo que puede inflar el RSS de un
+  proceso async con I/O en threadpool (asyncpg, `asyncio.to_thread` del
+  streaming de arriba) sin que haya ningún leak real detrás --
+  mitigación estándar y de coste cero para contenedores Python, no algo
+  específico de Freya.
+
+- **`services/github-runner/docker-compose.yml`: límite de memoria real
+  (768M), antes sin ninguno.** Era el único servicio de la plataforma
+  sin techo -- en uso real mide ~210 MiB (el propio proceso .NET del
+  runner + git/bash/curl), 768M da margen sin dejarlo abierto de par en
+  par. Nota real: esto NO acota los `docker build`/`docker compose
+  build` que el runner dispara -- son Docker-outside-of-Docker (hablan
+  con el daemon del HOST por el socket montado), así que ese trabajo
+  corre fuera del cgroup de este contenedor pase lo que pase.
+
+**Considerado y descartado, con motivo:** apagar `git`/`project-manager`/
+`cicd` para ahorrar sus ~180 MiB combinados -- `frontend` todavía no
+repunta sus vistas de git/CI-CD/kanban a la API de GitHub (gap ya
+documentado en la entrada de migración a GitHub), y `project-manager` en
+concreto tiene datos reales en uso (`gamification` sincroniza XP desde
+ahí). Apagarlos ahora rompería funcionalidad real que el usuario sigue
+usando, no es optimización -- sería regresión disfrazada de ahorro.

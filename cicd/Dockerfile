@@ -26,6 +26,7 @@ FROM python:3.12-slim AS runtime
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    MALLOC_ARENA_MAX=2 \
     # El cliente docker quiere escribir su config (~/.docker/config.json);
     # el usuario "freya" no tiene home (-M) y el resto del filesystem es
     # de sólo lectura, así que HOME apunta al tmpfs de /tmp.

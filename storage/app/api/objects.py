@@ -12,6 +12,7 @@ import base64
 import binascii
 
 from fastapi import APIRouter, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from freya_common import (
     NO_ENVELOPE_HEADER,
     BadRequest,
@@ -140,15 +141,12 @@ async def upload(
     _check_user_bucket_access(bucket, key, claims)
     settings = request.app.state.settings
 
+    # Rechazo temprano por Content-Length declarado -- una estimación honesta
+    # para la cuota (domain/objects.py), no la única defensa: blob_store.write
+    # corta la escritura byte a byte si el cuerpo real supera max_upload_bytes
+    # aunque Content-Length mienta o falte (transfer-encoding: chunked).
     content_length = int(request.headers.get("content-length") or 0)
     if content_length > settings.max_upload_bytes:
-        raise PayloadTooLarge(
-            f"El objeto excede el máximo de {settings.max_upload_bytes} bytes",
-            details={"max_bytes": settings.max_upload_bytes},
-        )
-
-    content = await request.body()
-    if len(content) > settings.max_upload_bytes:
         raise PayloadTooLarge(
             f"El objeto excede el máximo de {settings.max_upload_bytes} bytes",
             details={"max_bytes": settings.max_upload_bytes},
@@ -165,7 +163,9 @@ async def upload(
         settings.data_dir,
         bucket=bucket,
         key=key,
-        content=content,
+        content_stream=request.stream(),
+        content_length_hint=content_length,
+        max_bytes=settings.max_upload_bytes,
         mime_type=mime_type,
         metadata=metadata,
         if_none_match=if_none_match,
@@ -208,27 +208,33 @@ async def download(
     parsed_range = _parse_range(range_header, meta["size"]) if range_header else None
     if parsed_range is not None:
         start, end = parsed_range
-        body = blob_store.read_range(
-            request.app.state.settings.data_dir,
-            tenant,
-            bucket,
-            key,
-            meta["version_id"],
-            start,
-            end,
-        )
         headers["Content-Range"] = f"bytes {start}-{end}/{meta['size']}"
-        headers["Content-Length"] = str(len(body))
-        return Response(
-            content=body, status_code=206, media_type=meta["mime_type"], headers=headers
+        headers["Content-Length"] = str(end - start + 1)
+        return StreamingResponse(
+            blob_store.read_range(
+                request.app.state.settings.data_dir,
+                tenant,
+                bucket,
+                key,
+                meta["version_id"],
+                start,
+                end,
+            ),
+            status_code=206,
+            media_type=meta["mime_type"],
+            headers=headers,
         )
 
-    body = blob_store.read(
-        request.app.state.settings.data_dir, tenant, bucket, key, meta["version_id"]
-    )
-    headers["Content-Length"] = str(len(body))
-    return Response(
-        content=body, status_code=200, media_type=meta["mime_type"], headers=headers
+    # El tamaño ya lo sabe gestor-db (meta["size"]) -- no hace falta leer el
+    # fichero para calcular Content-Length como antes.
+    headers["Content-Length"] = str(meta["size"])
+    return StreamingResponse(
+        blob_store.read(
+            request.app.state.settings.data_dir, tenant, bucket, key, meta["version_id"]
+        ),
+        status_code=200,
+        media_type=meta["mime_type"],
+        headers=headers,
     )
 
 
