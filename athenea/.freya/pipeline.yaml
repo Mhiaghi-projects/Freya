@@ -1,7 +1,0 @@
-# Pasos del pipeline standard-tests de este servicio (ROADMAP.md ci-02,
-# recortado: sólo elige QUÉ de una lista cerrada correr, nunca QUÉ COMANDO
-# -- ver cicd/app/domain/runner.py, _STEP_COMMANDS).
-steps:
-  - lint
-  - test
-  - security_scan

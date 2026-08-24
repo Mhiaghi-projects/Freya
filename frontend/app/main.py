@@ -22,7 +22,6 @@ from freya_common import (
 
 from app.api import (
     admin,
-    athenea,
     catalog,
     cicd,
     gamification,
@@ -96,7 +95,6 @@ app.include_router(storage.router)
 app.include_router(cicd.router)
 app.include_router(projects.router)
 app.include_router(gamification.router)
-app.include_router(athenea.router)
 
 # El SPA (login + panel) vive bajo /app: HTML/CSS/JS servidos tal cual, sin
 # el sobre JSON (EnvelopeMiddleware sólo envuelve application/json). "/"
