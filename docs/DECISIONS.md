@@ -481,4 +481,72 @@ rollback -- en `docs/RUNBOOK.md`, nuevo.
 **No tocado, a propósito:** `git`, `project-manager`, `cicd` siguen sin
 workflow propio -- decisión ya tomada de no migrarlos a GitHub Actions
 hasta decomisionarlos (ver entrada de migración a GitHub arriba).
--- si vuelve a flaquear, aplicar el mismo diagnóstico.
+
+---
+
+## 2026-08-23/24 — Normalización e índices: auditoría de los 8 esquemas, 4 índices reales añadidos
+
+Pedido del usuario: "necesito que apliques normalización, índices a la
+tabla de base de datos."
+
+**Normalización -- revisada, sin cambios.** Se leyeron los 12 ficheros de
+migración de los 8 servicios con esquema propio (auth, cicd, gamification,
+gestor-monitoring, git, project-manager, secrets, storage). Todas las
+tablas usan una clave primaria de una sola columna (id con prefijo tipo
+ULID) -- descarta por construcción cualquier dependencia parcial (2FN
+trivialmente satisfecha) -- y no se encontró ninguna columna que dependa
+de otra columna no-clave en vez de la clave primaria (sin violaciones de
+3FN). Los casos que a primera vista parecen redundancia son patrones
+deliberados y correctos, no bugs:
+- Columnas `text[]` (`service_accounts.permissions`, `users.
+  extra_permissions`, `pm_tasks.labels`, `pm_projects.team_members`):
+  atributos genuinamente multivaluados donde asyncpg liga el array nativo
+  sin codec aparte -- partirlos en tablas de unión no aportaría nada hoy.
+- `gam_reward_redemptions.coin_cost` duplica `gam_rewards.coin_cost`: es
+  el patrón estándar de "precio en el momento de la transacción" (igual
+  que `order_items.price` en cualquier tienda) -- si el precio de la
+  recompensa cambia después, el historial de canjes no debe cambiar con
+  él. Quitar la columna sería el error, no dejarla.
+- `secrets.current_version` / `storage_objects.current_version_id`:
+  puntero materializado a la versión vigente en vez de calcularlo con
+  `MAX(version)` en cada lectura -- denormalización deliberada por
+  rendimiento, el mismo patrón en los dos servicios. (La versión anterior
+  de `secrets.current_version` SÍ tenía un bug real de sincronización al
+  borrar -- ver la entrada de la auditoría de arriba -- pero el patrón en
+  sí es correcto, ya arreglado.)
+- Ningún servicio referencia con FK las tablas de otro (p.ej.
+  `gam_xp_events.user_id` no referencia `auth.users`): decisión ya
+  documentada en el propio esquema -- cada servicio confía en el JWT, no
+  en una FK cruzada a un schema que además puede no ser visible desde su
+  propia conexión.
+
+**Índices -- 4 añadidos, verificados contra patrones de consulta reales
+(no especulativos).** Se revisó cada FK y columna filtrada por `WHERE` en
+el código Python de cada servicio antes de añadir nada -- un índice sin
+consulta real que lo use sólo añade coste de escritura sin beneficio.
+Candidatos descartados tras verificar que ningún query los usa hoy:
+`gam_reward_redemptions.reward_id`/`user_id` (tabla sólo de inserción,
+sin endpoint de historial todavía), `ci_pipelines.service` (list_pipelines
+no filtra por service), `pm_task_dependencies.depends_on_task_id`
+(sólo se consulta por `task_id`, ya cubierto por ser la columna líder de
+la PK compuesta), `secret_versions.data_key_id` (se usa como valor para
+buscar en `secret_data_keys` por su propia PK, no como filtro).
+
+Añadidos, cada uno con un `WHERE`/`ON DELETE CASCADE` real detrás:
+- `auth/migrations/0004_refresh_tokens_user_idx.sql` --
+  `refresh_tokens.user_id`: sin FK indexada, cada `delete_user` (borrado
+  duro real) obligaba a un recorrido completo de la tabla para resolver
+  el `ON DELETE CASCADE`.
+- `project-manager/migrations/0002_missing_indexes.sql` --
+  `pm_milestones.project_id` (`list_milestones`), `pm_sprints.project_id`
+  (`list_sprints`), `pm_tasks.assigned_to` (`list_tasks?assigned_to=`).
+
+Verificado en la base viva: `pg_indexes` confirma los 4 creados;
+`EXPLAIN` con `enable_seqscan=off` confirma que el planner los usa
+correctamente (`Index Scan` con `Index Cond` sobre la columna esperada).
+Sin forzar eso, el plan por defecto hoy es `Seq Scan` en las cuatro --
+correcto y esperado: con un puñado de filas por tabla (despliegue
+personal, no producción a escala), el propio Postgres decide que
+recorrer la tabla entera es más barato que la vuelta extra del índice.
+El índice empieza a ganar solo, sin ningún cambio de código, en cuanto
+el volumen de filas lo justifique -- no hace falta "activarlo" luego.
