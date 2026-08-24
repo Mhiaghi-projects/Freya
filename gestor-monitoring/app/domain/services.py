@@ -23,13 +23,19 @@ async def list_services(
     monitor: HealthMonitor,
     gestor_db: ServiceClient,
     tenant: str,
+    *,
+    project: str,
 ) -> dict[str, Any]:
+    """`tenant` es el propio de gestor-monitoring (su libro de uptime,
+    siempre uno solo, ver docs/DECISIONS.md); `project` es el proyecto que
+    se está mirando (pedido explícito del usuario: cada proyecto ve sólo
+    sus propios contenedores) -- son cosas distintas a propósito."""
     containers = await docker.list_service_containers()
     services = []
     counts = {"healthy": 0, "degraded": 0, "down": 0, "unknown": 0}
 
     for container in containers:
-        if not container["metrics_port"]:
+        if not container["metrics_port"] or container["tenant"] != project:
             continue
         name = container["service"]
         last = monitor.last_check.get(name, _DEFAULT_CHECK)
@@ -64,10 +70,14 @@ async def get_service(
     gestor_db: ServiceClient,
     tenant: str,
     *,
+    project: str,
     service: str,
 ) -> dict[str, Any]:
     containers = await docker.list_service_containers()
-    match = next((c for c in containers if c["service"] == service), None)
+    match = next(
+        (c for c in containers if c["service"] == service and c["tenant"] == project),
+        None,
+    )
     if match is None:
         raise NotFound(
             f"'{service}' no es un servicio conocido", details={"service": service}

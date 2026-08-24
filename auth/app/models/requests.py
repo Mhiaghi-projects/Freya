@@ -93,6 +93,22 @@ class UpdateThemeRequest(BaseModel):
     theme: str = Field(min_length=1)
 
 
+class TenantCreate(BaseModel):
+    """POST /admin/tenants. role: admin."""
+
+    id: str = Field(min_length=1, max_length=63, pattern=r"^[a-z][a-z0-9_-]*$")
+    name: str = Field(min_length=1, max_length=100)
+
+
+class TenantGrantUpdate(BaseModel):
+    """PUT /admin/users/{user_id}/tenants/{tenant_id}. role: admin.
+    Reemplaza la lista completa de permisos de ese (usuario, proyecto) --
+    una lista vacía quita el acceso a ese proyecto por completo (ver
+    app.domain.tenants.set_tenant_grant)."""
+
+    permissions: list[str] = Field(default_factory=list)
+
+
 class AdminPasswordReset(BaseModel):
     """POST /admin/users/{user_id}/reset-password. role: admin -- a
     diferencia de /auth/change-password (autoservicio), no exige la

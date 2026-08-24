@@ -10,6 +10,7 @@ from freya_common import current_tenant, gdb_mutate
 
 from app.deps import UserDep
 from app.domain.refresh import issue_refresh_token, rotate_refresh_token
+from app.domain.tenants import tenant_grants_of
 from app.domain.tokens import issue_user_token
 from app.domain.users import (
     authenticate_user,
@@ -63,6 +64,7 @@ async def sign_in(body: SignInRequest, request: Request) -> dict:
     principal = await authenticate_user(
         gestor_db, tenant, email=body.email, password=body.password
     )
+    tenant_grants = await tenant_grants_of(gestor_db, principal["id"])
     access_token, ttl = issue_user_token(
         keyring,
         user_id=principal["id"],
@@ -71,6 +73,7 @@ async def sign_in(body: SignInRequest, request: Request) -> dict:
         permissions=principal["permissions"],
         issuer=settings.auth_url,
         ttl_seconds=settings.access_token_user_ttl_seconds,
+        tenant_grants=tenant_grants,
     )
     refresh_token = await issue_refresh_token(
         gestor_db,
@@ -105,6 +108,7 @@ async def refresh_token_endpoint(body: RefreshTokenRequest, request: Request) ->
         gestor_db, tenant, body.refresh_token, ttl_days=settings.refresh_token_ttl_days
     )
     role, permissions = await role_and_permissions_of(gestor_db, tenant, user_id)
+    tenant_grants = await tenant_grants_of(gestor_db, user_id)
     access_token, ttl = issue_user_token(
         keyring,
         user_id=user_id,
@@ -113,6 +117,7 @@ async def refresh_token_endpoint(body: RefreshTokenRequest, request: Request) ->
         permissions=permissions,
         issuer=settings.auth_url,
         ttl_seconds=settings.access_token_user_ttl_seconds,
+        tenant_grants=tenant_grants,
     )
     return {
         "access_token": access_token,
@@ -145,7 +150,13 @@ async def sign_out(body: SignOutRequest, request: Request) -> None:
 async def me(claims: UserDep, request: Request) -> dict:
     gestor_db = request.app.state.gestor_db
     tenant = current_tenant()
-    return await get_user(gestor_db, tenant, claims["sub"])
+    profile = await get_user(gestor_db, tenant, claims["sub"])
+    # tenant_grants también viaja en el JWT, pero se recalcula fresco aquí
+    # -- un admin puede haber cambiado los accesos después de que el token
+    # se emitió; /me es la vía para que el panel vea el estado real sin
+    # esperar al próximo login/refresh.
+    profile["tenant_grants"] = await tenant_grants_of(gestor_db, claims["sub"])
+    return profile
 
 
 @router.post("/change-password", status_code=204)

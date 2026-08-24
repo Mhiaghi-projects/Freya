@@ -72,11 +72,21 @@ def issue_user_token(
     permissions: list[str],
     issuer: str,
     ttl_seconds: int,
+    tenant_grants: dict[str, list[str]] | None = None,
 ) -> tuple[str, int]:
+    # tenant_grants (accesos por proyecto a storage/monitoring, ver
+    # app.domain.tenants.py) va congelado en el token igual que
+    # `permissions` -- un cambio de un admin se ve recién en el próximo
+    # login/refresh, mismo comportamiento que ya tenía extra_permissions.
     return _issue(
         keyring,
         subject=user_id,
         issuer=issuer,
         ttl_seconds=ttl_seconds,
-        extra_claims={"tenant_id": tenant_id, "role": role, "permissions": permissions},
+        extra_claims={
+            "tenant_id": tenant_id,
+            "role": role,
+            "permissions": permissions,
+            "tenant_grants": tenant_grants or {},
+        },
     )

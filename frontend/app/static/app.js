@@ -136,6 +136,9 @@ async function boot() {
     document.querySelector('a[data-route="admin-users"]').classList.toggle(
       "hidden", currentUser.role !== "admin"
     );
+    document.querySelector('a[data-route="admin-tenants"]').classList.toggle(
+      "hidden", currentUser.role !== "admin"
+    );
     // Gamification es de autoservicio para cuentas "user" (hábitos, XP,
     // recompensas) -- una cuenta admin no tiene "yo" que gamificar (pedido
     // explícito del usuario, ver gamification/app/deps.py:user_id_of).
@@ -173,21 +176,62 @@ async function router() {
 window.addEventListener("hashchange", router);
 
 // --- dashboard / catalog -------------------------------------------------
-route("dashboard", async (content) => {
-  content.appendChild(el("h2", { class: "page-title" }, "Panel"));
-  const data = await api("GET", "/api/catalog");
+function renderServiceGrid(content, services) {
   const grid = el("div", { class: "grid" });
-  for (const svc of data.services) {
+  for (const svc of services) {
     grid.appendChild(
       el("div", { class: "card" },
-        el("h3", {}, svc.name),
+        el("h3", {}, svc.name || svc.service),
         badge(svc.status),
-        el("p", {}, svc.description),
-        el("p", { class: "muted" }, `Fase ${svc.phase}`),
+        svc.description ? el("p", {}, svc.description) : null,
+        svc.phase ? el("p", { class: "muted" }, `Fase ${svc.phase}`) : null,
       )
     );
   }
   content.appendChild(grid);
+  if (!services.length) content.appendChild(el("p", { class: "empty" }, "Sin servicios en este proyecto."));
+}
+
+function monitoringGrantedTenants() {
+  return Object.entries(currentUser.tenant_grants || {})
+    .filter(([, perms]) => perms.includes("read:monitoring"))
+    .map(([t]) => t);
+}
+
+route("dashboard", async (content) => {
+  content.appendChild(el("h2", { class: "page-title" }, "Panel"));
+
+  // El admin conserva la vista global de siempre, sin selector de proyecto
+  // (pedido explícito del usuario: "admin sólo tiene vista global de
+  // Freya").
+  if (currentUser.role === "admin") {
+    const data = await api("GET", "/api/catalog");
+    renderServiceGrid(content, data.services);
+    return;
+  }
+
+  const grantedTenants = monitoringGrantedTenants();
+  if (!grantedTenants.length) {
+    content.appendChild(el("p", { class: "empty" }, "No tienes acceso al monitoreo de ningún proyecto todavía. Pide a un administrador que te dé acceso."));
+    return;
+  }
+
+  const gridWrap = el("div", {});
+  async function loadProject(project) {
+    gridWrap.innerHTML = "";
+    const data = await api("GET", `/api/catalog?project=${encodeURIComponent(project)}`);
+    renderServiceGrid(gridWrap, data.services);
+  }
+
+  if (grantedTenants.length > 1) {
+    const select = el("select", { id: "dash-project" }, grantedTenants.map((t) => el("option", { value: t }, t)));
+    select.addEventListener("change", () => loadProject(select.value));
+    content.appendChild(el("div", { class: "inline-form" },
+      el("label", { class: "muted" }, "Proyecto: ", select)));
+  }
+
+  content.appendChild(gridWrap);
+  await loadProject(grantedTenants[0]);
 });
 
 // --- git ------------------------------------------------------------
@@ -236,21 +280,21 @@ route("git", async (content, [repoId]) => {
   }
 });
 
-// --- storage (Mi Drive) --------------------------------------------------
-// Cada usuario tiene su propio espacio en el bucket reservado "users"
-// (docs/ARCHITECTURE.md §2.1) -- storage aplica el aislamiento por dueño
-// en su propia API (storage/app/api/objects.py:_check_user_bucket_access),
-// así que nunca hace falta elegir ni crear un bucket: siempre es
-// "users/{tu_id}/...". Las carpetas no son un concepto real de storage --
-// se simulan con "/" en la clave, y una carpeta vacía se representa con un
-// objeto ".keep" (mismo truco que cualquier consola de S3).
-function driveUpload(key, file, onProgress) {
+// --- storage (Mi Drive / proyectos) --------------------------------------
+// Cada usuario tiene su propio espacio en el bucket reservado "users",
+// siempre en el tenant "freya" (su identidad vive ahí -- pedido explícito
+// del usuario: la cuenta es una sola, lo que cambia por proyecto es qué
+// puede ver). Un proyecto (tenant) con storage concedido aporta además su
+// bucket compartido "project". Las carpetas no son un concepto real de
+// storage -- se simulan con "/" en la clave, y una carpeta vacía se
+// representa con un objeto ".keep" (mismo truco que cualquier consola S3).
+function driveUpload(bucket, tenant, key, file, onProgress) {
   // XMLHttpRequest, no fetch: es la única API del navegador que reporta
   // progreso de SUBIDA (xhr.upload.onprogress) -- fetch no lo expone.
   return new Promise((resolve, reject) => {
     const encodedKey = key.split("/").map(encodeURIComponent).join("/");
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/storage/users/${encodedKey}`);
+    xhr.open("PUT", `/api/storage/${bucket}/${encodedKey}?project=${encodeURIComponent(tenant)}`);
     xhr.withCredentials = true;
     xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
     xhr.upload.addEventListener("progress", (e) => {
@@ -270,30 +314,41 @@ function driveUpload(key, file, onProgress) {
   });
 }
 
-function driveDownload(key) {
+function driveDownload(bucket, tenant, key) {
   // <a download> + click programático: dispara la descarga nativa del
   // navegador (con su propia barra de progreso) sin navegar la pestaña --
   // funciona igual para uno o para varios archivos seguidos.
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
   const a = document.createElement("a");
-  a.href = `/api/storage/users/${encodedKey}`;
+  a.href = `/api/storage/${bucket}/${encodedKey}?project=${encodeURIComponent(tenant)}`;
   a.download = key.split("/").pop();
   document.body.appendChild(a);
   a.click();
   a.remove();
 }
 
-route("storage", async (content, pathParts) => {
-  const decodedParts = pathParts.map(decodeURIComponent).filter(Boolean);
-  const prefix = `${currentUser.user_id}/${decodedParts.length ? decodedParts.join("/") + "/" : ""}`;
+function renderDirTree(nodes) {
+  const ul = el("ul", { class: "dir-tree" });
+  for (const n of nodes) {
+    ul.appendChild(el("li", {},
+      (n.type === "folder" ? "📁 " : "📄 ") + n.name,
+      n.type === "folder" && n.children.length ? renderDirTree(n.children) : null,
+    ));
+  }
+  return ul;
+}
 
-  content.appendChild(el("h2", { class: "page-title" }, "Mi Drive"));
+// Núcleo común del explorador de archivos: lo usa tanto Mi Drive (admin y
+// personal de un "user") como el storage de un proyecto -- lo único que
+// cambia es qué bucket/tenant y bajo qué ruta de hash vive cada uno.
+async function renderDriveBrowser(content, { bucket, tenant, decodedParts, prefix, hashBase, driveLabel }) {
+  content.appendChild(el("h2", { class: "page-title" }, driveLabel));
 
-  const crumbs = [el("a", { onclick: () => { location.hash = "#/storage"; } }, "Mi Drive")];
+  const crumbs = [el("a", { onclick: () => { location.hash = hashBase; } }, driveLabel)];
   for (let i = 0; i < decodedParts.length; i++) {
     const target = decodedParts.slice(0, i + 1).map(encodeURIComponent).join("/");
     crumbs.push(" / ");
-    crumbs.push(el("a", { onclick: () => { location.hash = `#/storage/${target}`; } }, decodedParts[i]));
+    crumbs.push(el("a", { onclick: () => { location.hash = `${hashBase}/${target}`; } }, decodedParts[i]));
   }
   content.appendChild(el("div", { class: "breadcrumb" }, crumbs));
 
@@ -306,12 +361,16 @@ route("storage", async (content, pathParts) => {
   const selectAllBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Seleccionar todo");
   const downloadSelectedBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Descargar seleccionados");
   const deleteSelectedBtn = el("button", { class: "btn btn-danger", type: "button" }, "Eliminar seleccionados");
-  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm, selectAllBtn, downloadSelectedBtn, deleteSelectedBtn));
+  const treeBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Ver árbol de directorios");
+  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm, selectAllBtn, downloadSelectedBtn, deleteSelectedBtn, treeBtn));
 
   const progressLabel = el("span", { class: "muted" });
   const progressBar = el("progress", { max: "100", value: "0" });
   const progressWrap = el("div", { class: "upload-progress hidden" }, progressLabel, progressBar);
   content.appendChild(progressWrap);
+
+  const treeWrap = el("div", { class: "hidden" });
+  content.appendChild(treeWrap);
 
   const toolbarError = el("p", { class: "error hidden" });
   content.appendChild(toolbarError);
@@ -329,14 +388,18 @@ route("storage", async (content, pathParts) => {
   content.appendChild(emptyMsg);
 
   async function listPrefix(p) {
-    const res = await api("GET", `/api/storage/users?prefix=${encodeURIComponent(p)}&limit=200`);
+    const res = await api("GET", `/api/storage/${bucket}?prefix=${encodeURIComponent(p)}&limit=200&project=${encodeURIComponent(tenant)}`);
     return res.objects || res.items || res;
+  }
+
+  function objectUrl(key) {
+    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+    return `/api/storage/${bucket}/${encodedKey}?project=${encodeURIComponent(tenant)}`;
   }
 
   async function deleteFolder(folderPrefix) {
     for (const o of await listPrefix(folderPrefix)) {
-      const encodedKey = o.key.split("/").map(encodeURIComponent).join("/");
-      await api("DELETE", `/api/storage/users/${encodedKey}`);
+      await api("DELETE", objectUrl(o.key));
     }
   }
 
@@ -358,7 +421,7 @@ route("storage", async (content, pathParts) => {
 
     for (const name of [...folders].sort()) {
       const target = [...decodedParts, name].map(encodeURIComponent).join("/");
-      tbody.appendChild(el("tr", { class: "clickable", onclick: () => { location.hash = `#/storage/${target}`; } },
+      tbody.appendChild(el("tr", { class: "clickable", onclick: () => { location.hash = `${hashBase}/${target}`; } },
         el("td", {}, ""),
         el("td", {}, `📁 ${name}`), el("td", {}, ""), el("td", {}, ""),
         el("td", {}, el("button", {
@@ -375,17 +438,16 @@ route("storage", async (content, pathParts) => {
       const fullKey = `${prefix}${f.name}`;
       const checkbox = el("input", { type: "checkbox", class: "file-select" });
       checkbox.dataset.key = fullKey;
-      const encodedKey = fullKey.split("/").map(encodeURIComponent).join("/");
       tbody.appendChild(el("tr", {}, el("td", {}, checkbox),
         el("td", {}, `📄 ${f.name}`), el("td", {}, String(f.size ?? "")),
         el("td", {}, f.last_modified || f.updated_at || ""),
         el("td", {},
-          el("button", { class: "btn btn-secondary", type: "button", onclick: () => driveDownload(fullKey) }, "Descargar"),
+          el("button", { class: "btn btn-secondary", type: "button", onclick: () => driveDownload(bucket, tenant, fullKey) }, "Descargar"),
           el("button", {
             class: "btn btn-danger", type: "button",
             onclick: async () => {
               if (!confirm(`¿Borrar '${f.name}'?`)) return;
-              await api("DELETE", `/api/storage/users/${encodedKey}`);
+              await api("DELETE", objectUrl(fullKey));
               await load();
             },
           }, "Borrar"))));
@@ -397,7 +459,7 @@ route("storage", async (content, pathParts) => {
     toolbarError.classList.add("hidden");
     const keys = [...table.querySelectorAll(".file-select:checked")].map((cb) => cb.dataset.key);
     if (!keys.length) { showError(new Error("Selecciona al menos un archivo para descargar")); return; }
-    for (const key of keys) driveDownload(key);
+    for (const key of keys) driveDownload(bucket, tenant, key);
   });
 
   selectAllBtn.addEventListener("click", () => {
@@ -412,11 +474,25 @@ route("storage", async (content, pathParts) => {
     if (!keys.length) { showError(new Error("Selecciona al menos un archivo para eliminar")); return; }
     if (!confirm(`¿Borrar ${keys.length} archivo(s) seleccionado(s)?`)) return;
     try {
-      for (const key of keys) {
-        const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-        await api("DELETE", `/api/storage/users/${encodedKey}`);
-      }
+      for (const key of keys) await api("DELETE", objectUrl(key));
       await load();
+    } catch (err) { showError(err); }
+  });
+
+  treeBtn.addEventListener("click", async () => {
+    toolbarError.classList.add("hidden");
+    if (!treeWrap.classList.contains("hidden")) {
+      treeWrap.classList.add("hidden");
+      treeWrap.innerHTML = "";
+      return;
+    }
+    try {
+      const res = await api("GET", `/api/storage/${bucket}/tree?prefix=${encodeURIComponent(prefix)}&project=${encodeURIComponent(tenant)}`);
+      treeWrap.innerHTML = "";
+      treeWrap.appendChild(res.tree.length
+        ? renderDirTree(res.tree)
+        : el("p", { class: "empty" }, "Carpeta vacía."));
+      treeWrap.classList.remove("hidden");
     } catch (err) { showError(err); }
   });
 
@@ -426,7 +502,7 @@ route("storage", async (content, pathParts) => {
     const name = folderInput.value.trim();
     if (!name) return;
     try {
-      await driveUpload(`${prefix}${name}/.keep`, new File([], ".keep"));
+      await driveUpload(bucket, tenant, `${prefix}${name}/.keep`, new File([], ".keep"));
       folderForm.reset();
       await load();
     } catch (err) { showError(err); }
@@ -451,7 +527,7 @@ route("storage", async (content, pathParts) => {
         progressLabel.textContent = `Subiendo ${file.name} (quedan ${uploadQueue.length})`;
         progressBar.value = 0;
         try {
-          await driveUpload(key, file, (frac) => { progressBar.value = frac * 100; });
+          await driveUpload(bucket, tenant, key, file, (frac) => { progressBar.value = frac * 100; });
         } catch (err) {
           showError(err);
         }
@@ -473,6 +549,84 @@ route("storage", async (content, pathParts) => {
     uploadForm.reset();
     processUploadQueue();
   });
+}
+
+function storageGrantedTenants() {
+  return Object.entries(currentUser.tenant_grants || {})
+    .filter(([, perms]) => perms.includes("read:storage"))
+    .map(([t]) => t);
+}
+
+route("storage", async (content, pathParts) => {
+  // El admin conserva exactamente el Mi Drive de siempre, sin selector de
+  // proyecto (pedido explícito del usuario: "admin sólo tiene vista global
+  // de Freya") -- misma ruta de hash que tenía antes de este cambio.
+  if (currentUser.role === "admin") {
+    const decodedParts = pathParts.map(decodeURIComponent).filter(Boolean);
+    const prefix = `${currentUser.user_id}/${decodedParts.length ? decodedParts.join("/") + "/" : ""}`;
+    await renderDriveBrowser(content, {
+      bucket: "users", tenant: "freya", decodedParts, prefix,
+      hashBase: "#/storage", driveLabel: "Mi Drive",
+    });
+    return;
+  }
+
+  const grantedTenants = storageGrantedTenants();
+  if (!grantedTenants.length) {
+    content.appendChild(el("h2", { class: "page-title" }, "Storage"));
+    content.appendChild(el("p", { class: "empty" }, "No tienes acceso a storage de ningún proyecto todavía. Pide a un administrador que te dé acceso."));
+    return;
+  }
+
+  const [mode, ...rest] = pathParts;
+
+  if (!mode) {
+    content.appendChild(el("h2", { class: "page-title" }, "Storage"));
+    const grid = el("div", { class: "grid" });
+    if (grantedTenants.includes("freya")) {
+      grid.appendChild(el("div", { class: "card clickable", onclick: () => { location.hash = "#/storage/personal"; } },
+        el("h3", {}, `📁 ${currentUser.first_name || currentUser.email}`),
+        el("p", { class: "muted" }, "Tu espacio personal")));
+    }
+    for (const t of grantedTenants) {
+      grid.appendChild(el("div", { class: "card clickable", onclick: () => { location.hash = `#/storage/project/${encodeURIComponent(t)}`; } },
+        el("h3", {}, `📁 ${t}`), el("p", { class: "muted" }, "Storage del proyecto")));
+    }
+    content.appendChild(grid);
+    return;
+  }
+
+  if (mode === "personal") {
+    if (!grantedTenants.includes("freya")) {
+      content.appendChild(el("p", { class: "error" }, "No tienes acceso a tu espacio personal."));
+      return;
+    }
+    const decodedParts = rest.map(decodeURIComponent).filter(Boolean);
+    const prefix = `${currentUser.user_id}/${decodedParts.length ? decodedParts.join("/") + "/" : ""}`;
+    await renderDriveBrowser(content, {
+      bucket: "users", tenant: "freya", decodedParts, prefix,
+      hashBase: "#/storage/personal", driveLabel: currentUser.first_name || currentUser.email,
+    });
+    return;
+  }
+
+  if (mode === "project") {
+    const [rawTenant, ...pathRest] = rest;
+    const projectTenant = rawTenant ? decodeURIComponent(rawTenant) : "";
+    if (!projectTenant || !grantedTenants.includes(projectTenant)) {
+      content.appendChild(el("p", { class: "error" }, "No tienes acceso al storage de ese proyecto."));
+      return;
+    }
+    const decodedParts = pathRest.map(decodeURIComponent).filter(Boolean);
+    const prefix = decodedParts.length ? decodedParts.join("/") + "/" : "";
+    await renderDriveBrowser(content, {
+      bucket: "project", tenant: projectTenant, decodedParts, prefix,
+      hashBase: `#/storage/project/${encodeURIComponent(projectTenant)}`, driveLabel: projectTenant,
+    });
+    return;
+  }
+
+  content.appendChild(el("p", { class: "error" }, "Ruta de storage desconocida."));
 });
 
 // --- cicd ------------------------------------------------------------
@@ -606,12 +760,17 @@ route("admin-users", async (content) => {
 
   // Sólo 2 tipos de cuenta (user/admin) -- el acceso por servicio de una
   // cuenta "user" es una combinación libre de grants (checkboxes), no un
-  // role aparte por servicio.
-  const [roles, grants] = await Promise.all([
+  // role aparte por servicio. storage/monitoring quedan fuera de esto
+  // (tenantGrantDefs, más abajo): se conceden por proyecto, no de forma
+  // global (pedido explícito del usuario).
+  const [roles, grants, tenants, tenantGrantDefs] = await Promise.all([
     api("GET", "/api/admin/roles"),
     api("GET", "/api/admin/service-grants"),
+    api("GET", "/api/admin/tenants"),
+    api("GET", "/api/admin/tenant-grants"),
   ]);
   const grantKeys = Object.keys(grants);
+  const tenantServiceKeys = Object.keys(tenantGrantDefs);
 
   function grantCheckboxes(idPrefix, checked) {
     return el("div", { class: "grant-checks" }, grantKeys.map((g) =>
@@ -693,12 +852,34 @@ route("admin-users", async (content) => {
     return el("td", {}, actions);
   }
 
-  function editPermissions(u) {
+  async function editPermissions(u) {
     const tr = tableBody.querySelector(`tr[data-user-id="${u.id}"]`);
     if (!tr) return;
     const current = grantKeys.filter((g) => grants[g].every((p) => (u.extra_permissions || []).includes(p)));
     const idPrefix = `eu-${u.id}`;
     const checks = grantCheckboxes(idPrefix, current);
+
+    // Accesos por proyecto (storage/monitoring, ver tenantGrantDefs) --
+    // tener el tenant no da nada por sí solo, cada servicio se marca
+    // aparte, por tenant (pedido explícito del usuario).
+    const userTenantGrants = await api("GET", `/api/admin/users/${u.id}/tenants`);
+    function tenantCheckboxId(tenantId, service) {
+      return `${idPrefix}-tg-${tenantId}-${service}`;
+    }
+    const tenantTable = el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", {}, "Proyecto"), ...tenantServiceKeys.map((s) => el("th", {}, s)))),
+      el("tbody", {}, tenants.map((t) => el("tr", {},
+        el("td", {}, t.name || t.id),
+        ...tenantServiceKeys.map((service) => el("td", {},
+          el("input", {
+            type: "checkbox", id: tenantCheckboxId(t.id, service),
+            checked: tenantGrantDefs[service].every((p) => (userTenantGrants[t.id] || []).includes(p)) ? "true" : null,
+          })
+        )),
+      ))),
+    );
+
     const editError = el("p", { class: "error hidden" });
     const saveBtn = el("button", { class: "btn", type: "button" }, "Guardar");
     const cancelBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Cancelar");
@@ -708,6 +889,12 @@ route("admin-users", async (content) => {
         await api("PATCH", `/api/admin/users/${u.id}/permissions`, {
           extra_permissions: selectedGrants(idPrefix),
         });
+        for (const t of tenants) {
+          const permissions = tenantServiceKeys
+            .filter((service) => document.getElementById(tenantCheckboxId(t.id, service)).checked)
+            .flatMap((service) => tenantGrantDefs[service]);
+          await api("PUT", `/api/admin/users/${u.id}/tenants/${encodeURIComponent(t.id)}`, { permissions });
+        }
         await renderUsers();
       } catch (err) {
         editError.textContent = err.message;
@@ -717,8 +904,11 @@ route("admin-users", async (content) => {
     cancelBtn.addEventListener("click", () => { renderUsers(); });
     tr.innerHTML = "";
     tr.appendChild(el("td", { colspan: "6" },
-      el("p", { class: "muted" }, `Accesos para ${u.email}:`),
-      checks, saveBtn, " ", cancelBtn, editError,
+      el("p", { class: "muted" }, `Accesos por servicio para ${u.email}:`),
+      checks,
+      el("p", { class: "muted" }, "Accesos por proyecto (tener el proyecto asignado no da ningún permiso por sí solo):"),
+      tenantTable,
+      saveBtn, " ", cancelBtn, editError,
     ));
   }
 
@@ -764,6 +954,53 @@ route("admin-users", async (content) => {
   });
 
   await renderUsers();
+});
+
+// --- tenants (proyectos) ------------------------------------------------
+// Crear un tenant es sólo aislamiento de datos (pedido explícito del
+// usuario): registra el tenant y aprovisiona su storage (schema propio +
+// bucket "project") -- no levanta ningún contenedor ni servicio nuevo.
+route("admin-tenants", async (content) => {
+  content.appendChild(el("h2", { class: "page-title" }, "Tenants"));
+  content.appendChild(el("p", { class: "muted" },
+    "Crear un tenant sólo aísla sus datos (storage). Para que alguien lo use, dale acceso desde Usuarios."));
+
+  const idInput = el("input", { type: "text", placeholder: "id (minúsculas, ej. athenea)", id: "nt-id", required: "true", pattern: "^[a-z][a-z0-9_-]*$" });
+  const nameInput = el("input", { type: "text", placeholder: "nombre", id: "nt-name", required: "true" });
+  const form = el("form", { class: "inline-form" }, idInput, nameInput,
+    el("button", { class: "btn", type: "submit" }, "Crear tenant"));
+  const formError = el("p", { class: "error hidden" });
+  content.appendChild(form);
+  content.appendChild(formError);
+
+  const tableBody = el("tbody", {});
+  content.appendChild(el("table", {},
+    el("thead", {}, el("tr", {}, el("th", {}, "Id"), el("th", {}, "Nombre"), el("th", {}, "Creado"))),
+    tableBody,
+  ));
+
+  async function renderTenants() {
+    const tenants = await api("GET", "/api/admin/tenants");
+    tableBody.innerHTML = "";
+    for (const t of tenants) {
+      tableBody.appendChild(el("tr", {}, el("td", {}, t.id), el("td", {}, t.name), el("td", {}, t.created_at || "")));
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    formError.classList.add("hidden");
+    try {
+      await api("POST", "/api/admin/tenants", { id: idInput.value.trim(), name: nameInput.value.trim() });
+      form.reset();
+      await renderTenants();
+    } catch (err) {
+      formError.textContent = err.message;
+      formError.classList.remove("hidden");
+    }
+  });
+
+  await renderTenants();
 });
 
 // --- mi progreso (gamification) --------------------------------------

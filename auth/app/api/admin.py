@@ -16,6 +16,13 @@ from app.domain.accounts import (
     create_service_account,
     update_service_account_permissions,
 )
+from app.domain.tenants import (
+    TENANT_GRANTABLE_PERMISSIONS,
+    create_tenant,
+    list_tenants,
+    set_tenant_grant,
+    tenant_grants_of,
+)
 from app.domain.users import (
     ROLE_PERMISSIONS,
     SERVICE_GRANTS,
@@ -31,6 +38,8 @@ from app.models.requests import (
     AdminUserCreate,
     ServiceAccountCreate,
     ServiceAccountPermissionsUpdate,
+    TenantCreate,
+    TenantGrantUpdate,
 )
 
 router = APIRouter(tags=["admin"])
@@ -125,3 +134,49 @@ async def reset_user_password(
 @router.delete("/admin/users/{user_id}", status_code=204)
 async def delete_admin_user(user_id: str, _admin: AdminDep, request: Request) -> None:
     await delete_user(request.app.state.gestor_db, current_tenant(), user_id=user_id)
+
+
+@router.get("/admin/tenant-grants")
+async def list_tenant_grants(_admin: AdminDep) -> dict:
+    return dict(TENANT_GRANTABLE_PERMISSIONS)
+
+
+@router.get("/admin/tenants")
+async def list_admin_tenants(_admin: AdminDep, request: Request) -> list:
+    return await list_tenants(request.app.state.gestor_db)
+
+
+@router.post("/admin/tenants", status_code=201)
+async def create_admin_tenant(
+    body: TenantCreate, admin: AdminDep, request: Request
+) -> dict:
+    return await create_tenant(
+        request.app.state.gestor_db,
+        tenant_id=body.id,
+        name=body.name,
+        created_by=admin.get("sub"),
+    )
+
+
+@router.get("/admin/users/{user_id}/tenants")
+async def get_user_tenant_grants(
+    user_id: str, _admin: AdminDep, request: Request
+) -> dict:
+    return await tenant_grants_of(request.app.state.gestor_db, user_id)
+
+
+@router.put("/admin/users/{user_id}/tenants/{tenant_id}")
+async def update_user_tenant_grant(
+    user_id: str,
+    tenant_id: str,
+    body: TenantGrantUpdate,
+    _admin: AdminDep,
+    request: Request,
+) -> dict:
+    await set_tenant_grant(
+        request.app.state.gestor_db,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        permissions=body.permissions,
+    )
+    return {"user_id": user_id, "tenant_id": tenant_id, "permissions": body.permissions}

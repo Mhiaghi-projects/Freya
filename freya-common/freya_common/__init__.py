@@ -7,6 +7,7 @@ from .auth_client import (
     ServiceTokenProvider,
     TokenVerifier,
     require_permissions,
+    require_service_access,
 )
 from .config import BaseServiceSettings
 from .context import (
@@ -42,7 +43,7 @@ from .gestor_db import gdb_mutate, gdb_query
 from .http import ServiceClient, build_http_client
 from .ids import new_id, ulid
 from .logging import configure_logging
-from .migrations import MigrationRunner
+from .migrations import MigrationRunner, load_migrations
 from .rate_limit import SlidingWindowLimiter
 
 __version__ = "1.0.0"
@@ -85,8 +86,10 @@ __all__ = [
     "current_tenant",
     "gdb_mutate",
     "gdb_query",
+    "load_migrations",
     "new_id",
     "new_request_id",
     "require_permissions",
+    "require_service_access",
     "ulid",
 ]

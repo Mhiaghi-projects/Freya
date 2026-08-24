@@ -49,12 +49,14 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
 # para que el panel construya la lista de checkboxes). admin:git queda
 # fuera a propósito -- borrar repos no es un grant que quepa dar por
 # servicio, es cosa de administración de verdad.
+#
+# storage y monitoring NO están aquí (pedido explícito del usuario): esos
+# dos se conceden por proyecto/tenant, no de forma global -- ver
+# app.domain.tenants.TENANT_GRANTABLE_PERMISSIONS y user_tenant_grants.
 SERVICE_GRANTS: dict[str, list[str]] = {
     "git": ["read:git", "write:git"],
     "cicd": ["read:cicd", "write:cicd"],
-    "monitoring": ["read:monitoring", "write:monitoring"],
     "project-manager": ["read:project-manager", "write:project-manager"],
-    "storage": ["read:storage", "write:storage"],
 }
 
 _GRANTABLE_PERMISSIONS = {p for perms in SERVICE_GRANTS.values() for p in perms}

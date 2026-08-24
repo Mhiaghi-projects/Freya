@@ -814,3 +814,75 @@ reportados por el usuario al empezar este tramo de optimización -- caída
 de aproximadamente un tercio a la mitad, la mayor parte gracias al
 streaming real de `storage` (~200 MiB) y a no dejar Grafana corriendo por
 error (~210 MiB).
+
+---
+
+## 2026-08-24 — Acceso multi-tenant: identidad centralizada, grants por (usuario, tenant, servicio)
+
+Pedido explícito del usuario: un usuario puede tener acceso a varios
+tenants (proyectos); tener un tenant asignado no da ningún permiso por sí
+solo -- cada servicio (storage, monitoring) se concede aparte, por
+tenant (ejemplo suyo: "Mhiaghi tiene sólo acceso al storage de Freya,
+mientras que sólo tiene acceso al monitoreo de Athenea"); monitoreo de
+Freya no debe verse salvo para el admin o para un usuario al que
+explícitamente se le dé acceso al tenant "freya"; el admin sólo tiene
+vista global de Freya, sin selector de proyecto.
+
+Antes de esto, `tenant` no era más que "lo que sea que alguien mande en
+`X-Tenant-Context`" -- sin registro, sin lista de conocidos, y cada
+tenant tenía su propia tabla `users` totalmente aislada (una cuenta en
+"freya" no existía en "athenea"). Ese diseño está pensado para tenants
+como despliegues externos completos (la prueba de Athenea de una sesión
+anterior: su propio stack, su propio contenedor). Lo que pide el usuario
+ahora es otra cosa: un único panel, una única cuenta por persona, que ve
+distintos "proyectos" según qué se le conceda -- más cerca de
+organizaciones/workspaces dentro de una sola plataforma que de tenants
+SaaS aislados.
+
+Decisión: la identidad (login, JWT) se queda anclada al tenant "freya"
+(igual que ya ocurría en la práctica: frontend nunca reenviaba
+`X-Tenant-Context` del navegador, todo pasaba por su propio
+`default_tenant`). Se añaden dos tablas nuevas en el schema de "freya"
+(el plano de control): `tenants` (registro real, antes inexistente) y
+`user_tenant_grants` (user_id, tenant_id, permissions[]) -- estar
+"asignado" a un tenant es, literalmente, tener una fila ahí; qué
+servicios ve dentro de ese tenant es la lista de permisos de esa fila.
+storage y monitoring salen de `SERVICE_GRANTS` (donde eran un checkbox
+global) y pasan a `TENANT_GRANTABLE_PERMISSIONS`, concedibles por tenant;
+git/cicd/project-manager se quedan como grants planos, sin tenant, por
+ser accesos a la malla propia de Freya, no a un proyecto.
+
+`tenant_grants` viaja congelado en el JWT (igual que ya pasaba con
+`permissions`) -- un cambio de un admin se ve en el próximo login/refresh,
+mismo comportamiento que ya tenía `extra_permissions`. Cada servicio
+valida con `require_service_access(claims, tenant, permiso)`
+(`freya-common`): pasa con el permiso plano (rol admin, sin acotar por
+tenant -- pedido explícito: "admin sólo ve Freya") o con un tenant_grant
+para ese tenant exacto.
+
+Monitoreo no tiene tablas por tenant -- sigue viviendo en un único schema
+(el de gestor-monitoring), y en vez de eso los contenedores se etiquetan
+con `freya.tenant` (ausente = "freya", los servicios propios de la
+plataforma no necesitaron ningún cambio de despliegue). Storage sí sigue
+el patrón ya establecido de un schema por tenant: "crear un tenant"
+(pedido explícito: "automatízalo, pero sólo aislamiento de datos, sin
+levantar ningún servicio nuevo") aplica las migraciones de storage contra
+el schema del tenant y crea su bucket compartido `project` -- ningún
+contenedor nuevo, a diferencia de la prueba de Athenea anterior.
+
+El espacio personal ("Mi Drive", bucket `users`) se queda ancorado
+siempre al tenant "freya" -- es del propio home de la cuenta, no de un
+proyecto -- gateado por tener storage concedido ahí específicamente. El
+storage de un proyecto (bucket `project`) es compartido entre quien
+tenga ese grant, no aislado por dueño.
+
+**Descartado:** una cuenta por tenant, vinculadas entre sí -- mantiene el
+aislamiento original al pie de la letra, pero el propio usuario aclaró
+que una cuenta recién creada no tiene acceso a ningún tenant hasta que se
+le asigne, lo que sólo tiene sentido si es la MISMA cuenta la que gana
+visibilidad, no una cuenta nueva por proyecto.
+
+Como demostración real (no descartable, pedido explícito): se creó el
+tenant "athenea" de verdad (permanente, sin servicio propio) y se le dio
+acceso a la cuenta real de Mhiaghi: storage en "freya", storage y
+monitoring en "athenea".

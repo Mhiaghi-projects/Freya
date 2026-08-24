@@ -24,7 +24,7 @@ from freya_common import (
     create_app,
 )
 
-from app.api import buckets, objects
+from app.api import admin, buckets, objects
 from app.config import get_settings
 from app.domain.buckets import create_bucket
 
@@ -140,8 +140,9 @@ app = create_app(
     readiness_checks={"gestor_db": check_gestor_db, "migrations": check_migrations},
 )
 
-# buckets ANTES que objects: "/storage/buckets" y "/storage/{bucket}" tienen
-# la misma forma (un segmento tras /storage) — sin este orden, "buckets" se
-# leería como el nombre de un bucket.
+# admin y buckets ANTES que objects: "/storage/buckets" y "/storage/{bucket}"
+# tienen la misma forma (un segmento tras /storage) — sin este orden,
+# "buckets" (o "admin") se leería como el nombre de un bucket.
+app.include_router(admin.router)
 app.include_router(buckets.router)
 app.include_router(objects.router)

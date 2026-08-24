@@ -194,3 +194,27 @@ def require_permissions(claims: dict[str, Any], *needed: str) -> None:
             "Faltan permisos para esta operación",
             details={"missing_permissions": missing},
         )
+
+
+def require_service_access(
+    claims: dict[str, Any], tenant: str, permission: str
+) -> None:
+    """Como require_permissions, pero para storage/monitoring, que se
+    conceden por proyecto (tenant), no de forma global (pedido explícito
+    del usuario: acceso a un tenant no implica todos los permisos -- cada
+    servicio se concede aparte, por tenant).
+
+    Pasa si el permiso está en la lista plana del token (rol admin, que
+    sigue sin estar acotado por tenant) O si el token trae un tenant_grant
+    para `tenant` que incluye `permission` (auth/app/domain/tenants.py,
+    emitido en el JWT en el login/refresh)."""
+    granted = set(claims.get("permissions") or [])
+    if "*" in granted or permission in granted:
+        return
+    tenant_grants = claims.get("tenant_grants") or {}
+    if permission in set(tenant_grants.get(tenant) or []):
+        return
+    raise Forbidden(
+        "Faltan permisos para esta operación en este proyecto",
+        details={"missing_permission": permission, "tenant": tenant},
+    )

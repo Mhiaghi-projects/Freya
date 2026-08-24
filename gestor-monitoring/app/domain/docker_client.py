@@ -40,6 +40,11 @@ class DockerClient:
                 {
                     "id": raw["Id"][:12],
                     "service": labels.get("freya.service"),
+                    # Sin la etiqueta freya.tenant, es un servicio propio de
+                    # la plataforma (pedido explícito del usuario: monitoreo
+                    # por proyecto -- ver gestor-monitoring/app/domain/
+                    # services.py y app/api/monitoring.py).
+                    "tenant": labels.get("freya.tenant", "freya"),
                     "metrics_port": labels.get("freya.metrics.port"),
                     "metrics_path": labels.get("freya.metrics.path", "/metrics"),
                     # Esquema para /ready (health_monitor.py) y /metrics
