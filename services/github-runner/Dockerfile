@@ -13,9 +13,17 @@ FROM ubuntu:24.04
 ARG RUNNER_VERSION=2.321.0
 ARG TARGETARCH=x64
 
+# libicu74: ./bin/installdependencies.sh (más abajo) trae una lista fija
+# de nombres libicuNN/libssl1.x que sólo existen en Ubuntu 22.04 o
+# anteriores -- en 24.04 "noble" ninguno resuelve (el nombre real es
+# libicu74), así que se queda sin instalar nada. No es sólo un aviso
+# cosmético: confirmado en vivo que config.sh, ANTES de arrancar el
+# runner, hace su propio "ldconfig | grep libicu" y si no encuentra nada
+# hace "exit 1" -- así fallaba en silencio (docker logs no mostraba más
+# que ese aviso) cada vez que el contenedor se recreaba desde cero.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates git jq sudo \
-        gnupg lsb-release \
+        gnupg lsb-release libicu74 \
     && rm -rf /var/lib/apt/lists/*
 
 # CLI de Docker (no el daemon -- eso lo tiene ya Docker Desktop en el host,
