@@ -86,6 +86,13 @@ class AdminPermissionsUpdate(BaseModel):
     extra_permissions: list[str] = Field(default_factory=list)
 
 
+class UpdateThemeRequest(BaseModel):
+    """PATCH /auth/me/theme. Autoservicio, requiere sesión propia. El valor
+    se valida contra app.domain.users.THEMES, no aquí."""
+
+    theme: str = Field(min_length=1)
+
+
 class AdminPasswordReset(BaseModel):
     """POST /admin/users/{user_id}/reset-password. role: admin -- a
     diferencia de /auth/change-password (autoservicio), no exige la

@@ -17,6 +17,7 @@ from app.domain.users import (
     create_user,
     get_user,
     role_and_permissions_of,
+    update_theme,
 )
 from app.models.requests import (
     ChangePasswordRequest,
@@ -24,6 +25,7 @@ from app.models.requests import (
     SignInRequest,
     SignOutRequest,
     SignUpRequest,
+    UpdateThemeRequest,
 )
 
 router = APIRouter(tags=["auth"])
@@ -159,3 +161,12 @@ async def change_password_endpoint(
         current_password=body.current_password,
         new_password=body.new_password,
     )
+
+
+@router.patch("/me/theme", status_code=204)
+async def update_theme_endpoint(
+    body: UpdateThemeRequest, claims: UserDep, request: Request
+) -> None:
+    gestor_db = request.app.state.gestor_db
+    tenant = current_tenant()
+    await update_theme(gestor_db, tenant, user_id=claims["sub"], theme=body.theme)

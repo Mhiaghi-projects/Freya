@@ -93,6 +93,41 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
 
 let currentUser = null;
 
+// --- temas ---------------------------------------------------------------
+// Cada cuenta elige el suyo (pedido explícito del usuario: admin puede
+// tener un tema distinto al de otro usuario) -- se guarda en el perfil
+// (auth/app/domain/users.py THEMES) y se aplica vía data-app-theme en
+// <html> (ver frontend/app/static/style.css).
+const THEMES = [
+  { id: "freya", label: "Freya (original)" },
+  { id: "claro", label: "Claro" },
+  { id: "oscuro", label: "Oscuro" },
+  { id: "naturaleza", label: "Naturaleza" },
+  { id: "ciudad", label: "Ciudad" },
+  { id: "tormenta", label: "Tormenta eléctrica" },
+];
+
+const themeSelect = document.getElementById("theme-select");
+for (const t of THEMES) {
+  themeSelect.appendChild(el("option", { value: t.id }, t.label));
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-app-theme", theme || "freya");
+}
+
+themeSelect.addEventListener("change", async () => {
+  const theme = themeSelect.value;
+  applyTheme(theme);
+  try {
+    await api("PATCH", "/api/session/theme", { theme });
+    if (currentUser) currentUser.theme = theme;
+  } catch (err) {
+    if (currentUser) applyTheme(currentUser.theme);
+    alert(err.message);
+  }
+});
+
 async function boot() {
   try {
     currentUser = await api("GET", "/api/session/me");
@@ -107,6 +142,8 @@ async function boot() {
     document.querySelector('a[data-route="progress"]').classList.toggle(
       "hidden", currentUser.role === "admin"
     );
+    applyTheme(currentUser.theme);
+    themeSelect.value = currentUser.theme || "freya";
     showScreen("app");
     router();
   } catch {

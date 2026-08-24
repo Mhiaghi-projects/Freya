@@ -59,6 +59,12 @@ SERVICE_GRANTS: dict[str, list[str]] = {
 
 _GRANTABLE_PERMISSIONS = {p for perms in SERVICE_GRANTS.values() for p in perms}
 
+# Temas de interfaz que el panel ofrece (pedido explícito del usuario: cada
+# cuenta elige el suyo -- admin puede tener un tema distinto al de un
+# "user" cualquiera). "freya" es el tema original, sigue siendo el
+# predeterminado.
+THEMES = ["freya", "claro", "oscuro", "naturaleza", "ciudad", "tormenta"]
+
 
 def permissions_for_role(role: str) -> list[str]:
     return ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS["user"])
@@ -239,6 +245,7 @@ async def role_and_permissions_of(
 
 _PROFILE_FIELDS = [
     "id", "email", "first_name", "last_name", "role", "extra_permissions", "created_at",
+    "theme",
 ]
 
 
@@ -253,6 +260,23 @@ async def get_user(client: ServiceClient, tenant: str, user_id: str) -> dict[str
 
 async def list_users(client: ServiceClient, tenant: str) -> list[dict[str, Any]]:
     return await gdb_query(client, tenant, table="users", select=_PROFILE_FIELDS)
+
+
+async def update_theme(
+    client: ServiceClient, tenant: str, *, user_id: str, theme: str
+) -> None:
+    if theme not in THEMES:
+        raise BadRequest(
+            f"tema desconocido: '{theme}'", details={"known_themes": THEMES}
+        )
+    await gdb_mutate(
+        client,
+        tenant,
+        table="users",
+        action="update",
+        where={"id": user_id},
+        data={"theme": theme},
+    )
 
 
 def _now_iso() -> str:

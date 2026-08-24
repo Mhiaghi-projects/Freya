@@ -1,3 +1,10 @@
+/* --- temas --- */
+/* "freya" (el original) vive en el :root plano -- es el predeterminado
+   para toda cuenta que nunca eligió otro (auth/migrations/0005_theme.sql
+   por defecto en "freya"). Los demás se activan con
+   [data-app-theme="..."] en <html> (app.js boot(), aplicado según el
+   `theme` de la cuenta que inició sesión -- pedido explícito del usuario:
+   cada cuenta elige el suyo). */
 :root {
   --bg: #0f1420;
   --panel: #161d2e;
@@ -14,6 +21,81 @@
   font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+:root[data-app-theme="claro"] {
+  --bg: #f5f6fa;
+  --panel: #ffffff;
+  --panel-2: #eef0f6;
+  --border: #dbdfe8;
+  --text: #1b2333;
+  --muted: #6b7284;
+  --accent: #3f6fe0;
+  --accent-2: #5f8bff;
+  --ok: #1f9d63;
+  --warn: #c98a1c;
+  --bad: #d93c42;
+  --unknown: #8991a3;
+}
+
+:root[data-app-theme="oscuro"] {
+  --bg: #0a0a0c;
+  --panel: #151517;
+  --panel-2: #1c1c1f;
+  --border: #2e2e33;
+  --text: #ececec;
+  --muted: #8f8f96;
+  --accent: #d9a441;
+  --accent-2: #e8bc6b;
+  --ok: #4caf7d;
+  --warn: #e0a83e;
+  --bad: #e0555a;
+  --unknown: #6b6b70;
+}
+
+:root[data-app-theme="naturaleza"] {
+  --bg: #12190f;
+  --panel: #1b2618;
+  --panel-2: #223021;
+  --border: #33452e;
+  --text: #e7efdf;
+  --muted: #9fb08e;
+  --accent: #5ea354;
+  --accent-2: #7cc26e;
+  --ok: #5ea354;
+  --warn: #c9a227;
+  --bad: #c1553a;
+  --unknown: #6f7d63;
+}
+
+:root[data-app-theme="ciudad"] {
+  --bg: #0c0f14;
+  --panel: #151a22;
+  --panel-2: #1b212b;
+  --border: #2a3340;
+  --text: #e3e8f0;
+  --muted: #7c8797;
+  --accent: #22e0d6;
+  --accent-2: #ff4fd8;
+  --ok: #3fd68c;
+  --warn: #f2b84b;
+  --bad: #ff4f6d;
+  --unknown: #5c6577;
+}
+
+:root[data-app-theme="tormenta"] {
+  --bg: #0d0b1a;
+  --panel: #171227;
+  --panel-2: #1e1832;
+  --border: #332a52;
+  --text: #ece9fb;
+  --muted: #9a90bd;
+  --accent: #f4e04d;
+  --accent-2: #ffe873;
+  --ok: #4fd6a0;
+  --warn: #f4e04d;
+  --bad: #ff5468;
+  --unknown: #7268a0;
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -21,6 +103,7 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  transition: background-color 0.2s, color 0.2s;
 }
 
 .hidden { display: none !important; }

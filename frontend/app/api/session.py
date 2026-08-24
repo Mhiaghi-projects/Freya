@@ -30,6 +30,10 @@ class ChangePasswordBody(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class UpdateThemeBody(BaseModel):
+    theme: str = Field(min_length=1)
+
+
 @router.post("/sign-in")
 async def sign_in(
     body: SignInBody, request: Request, response: Response, settings: SettingsDep
@@ -110,3 +114,19 @@ async def change_password(
             "new_password": body.new_password,
         },
     )
+
+
+@router.patch("/theme", status_code=204)
+async def update_theme(
+    body: UpdateThemeBody,
+    session: WebSessionDep,
+    request: Request,
+    settings: SettingsDep,
+) -> None:
+    client = backend_client(
+        "auth",
+        settings=settings,
+        http=request.app.state.http,
+        access_token=session.access_token,
+    )
+    await client.request("PATCH", "/api/v1/auth/me/theme", json={"theme": body.theme})
