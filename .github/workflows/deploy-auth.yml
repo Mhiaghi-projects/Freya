@@ -18,9 +18,18 @@
 #   1. "check" -- corre en un runner de GitHub (ubuntu-latest, efímero, de
 #      pago por GitHub, nunca toca el PC del usuario). checkout de verdad
 #      (actions/checkout), build de la imagen "dev", lint, test, security
-#      scan (pip-audit). Reproduce a mano los mismos pasos que
-#      .freya/pipeline.yaml declaraba para el viejo cicd (docs/ROADMAP.md
-#      ci-02).
+#      scan (pip-audit) y escaneo de la imagen "runtime" con Trivy.
+#      Reproduce a mano los mismos pasos que .freya/pipeline.yaml
+#      declaraba para el viejo cicd (docs/ROADMAP.md ci-02).
+#
+#      pip-audit y Trivy no son lo mismo: pip-audit mira las dependencias
+#      Python que este servicio instala; Trivy mira TODA la imagen
+#      "runtime" que de verdad se despliega, incluido el sistema operativo
+#      base (python:3.12-slim trae sus propios paquetes apt, con sus
+#      propios CVEs, que pip-audit nunca ve). Sólo falla en CRITICAL con
+#      parche disponible (`ignore-unfixed: true`) -- bloquear en HIGH o en
+#      CVEs sin parche disponible convertiría el pipeline en un muro que
+#      nadie puede destrabar.
 #
 #   2. "deploy" -- needs: check, así que si el paso 1 falla esto ni
 #      arranca: código que no pasa lint/test/security_scan nunca llega a
@@ -66,8 +75,22 @@ jobs:
       - name: Test
         run: docker run --rm --network none freya/auth:test pytest -v /srv/tests
 
-      - name: Security scan
+      - name: Security scan (dependencias Python)
         run: docker run --rm --env HOME=/tmp freya/auth:test pip-audit
+
+      - name: Construir imagen runtime
+        run: |
+          docker build --quiet --target runtime \
+            --tag freya/auth:runtime-scan \
+            --file auth/Dockerfile .
+
+      - name: Security scan (imagen runtime completa, incluido el SO base)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: freya/auth:runtime-scan
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
   deploy:
     needs: check

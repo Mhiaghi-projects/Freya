@@ -3,6 +3,7 @@ recortado: ver app/domain/runner.py y README para el porqué)."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from datetime import UTC, datetime
@@ -25,6 +26,20 @@ from app.domain.pipelines import get_pipeline
 logger = logging.getLogger(__name__)
 
 _ARTIFACTS_BUCKET = "artifacts"
+
+# POST /pipelines/{id}/trigger no tenía ningún límite -- cada disparo hace
+# un "docker build" + "docker run" reales (runner.run_standard_tests), y
+# nada impedía que N peticiones seguidas lanzaran N builds a la vez. Es
+# justo el patrón de contención que causó horas de investigación de
+# "unhealthy transitorio" en la propia plataforma esta sesión (ver
+# docs/DECISIONS.md), pero aquí disparable a demanda por cualquiera con
+# write:cicd -- OWASP API4:2023, Unrestricted Resource Consumption. Un
+# semáforo acota la concurrencia real (no sólo la tasa por ventana de
+# tiempo, que no habría evitado que 2 triggers simultáneos se solaparan);
+# 2 a la vez es generoso para un host de un solo desarrollador real.
+_MAX_CONCURRENT_RUNS = 2
+_QUEUE_WAIT_TIMEOUT_SECONDS = 300
+_run_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RUNS)
 
 
 def _now() -> str:
@@ -92,43 +107,16 @@ async def trigger_pipeline(
         data={
             "id": run_id,
             "pipeline_id": pipeline_id,
-            "status": "running",
+            "status": "queued",
             "triggered_by": triggered_by,
             "trigger_ref": trigger_ref,
-            "started_at": _now(),
         },
     )
 
     try:
-        result = await runner.run_standard_tests(pipeline["service"])
-    except runner.InvalidServiceError as exc:
-        await gdb_mutate(
-            client,
-            tenant,
-            table="ci_runs",
-            action="update",
-            where={"id": run_id},
-            data={"status": "failed", "finished_at": _now()},
-        )
-        raise NotFound(str(exc)) from exc
-    except runner.InvalidPipelineSpecError as exc:
-        await gdb_mutate(
-            client,
-            tenant,
-            table="ci_runs",
-            action="update",
-            where={"id": run_id},
-            data={"status": "failed", "finished_at": _now()},
-        )
-        raise UnprocessableEntity(str(exc)) from exc
-    except Exception as exc:
-        # Cualquier otra cosa (Docker Desktop caído, socket inaccesible,
-        # OSError...) es un fallo real de infraestructura, no de la
-        # petición -- sin este catch-all, la fila de ci_runs ya insertada
-        # arriba como "running" se queda así para siempre: nada la marca
-        # como fallida, y GET /runs/{id} nunca refleja que la ejecución
-        # murió. Ver docs/DECISIONS.md.
-        logger.exception("fallo inesperado del runner", extra={"run_id": run_id})
+        async with asyncio.timeout(_QUEUE_WAIT_TIMEOUT_SECONDS):
+            await _run_semaphore.acquire()
+    except TimeoutError:
         await gdb_mutate(
             client,
             tenant,
@@ -138,8 +126,22 @@ async def trigger_pipeline(
             data={"status": "failed", "finished_at": _now()},
         )
         raise DependencyUnavailable(
-            f"el runner de CI/CD falló inesperadamente: {exc}"
-        ) from exc
+            f"demasiadas ejecuciones de CI en curso (máximo {_MAX_CONCURRENT_RUNS} "
+            "a la vez); reintenta en unos minutos"
+        ) from None
+
+    try:
+        await gdb_mutate(
+            client,
+            tenant,
+            table="ci_runs",
+            action="update",
+            where={"id": run_id},
+            data={"status": "running", "started_at": _now()},
+        )
+        result = await _run_pipeline(client, tenant, run_id, pipeline)
+    finally:
+        _run_semaphore.release()
 
     for job in result.jobs:
         job_id = new_id("job")
@@ -227,6 +229,52 @@ async def trigger_pipeline(
     )
 
     return await get_run(client, tenant, run_id=run_id)
+
+
+async def _run_pipeline(
+    client: ServiceClient, tenant: str, run_id: str, pipeline: dict[str, Any]
+) -> runner.RunResult:
+    try:
+        return await runner.run_standard_tests(pipeline["service"])
+    except runner.InvalidServiceError as exc:
+        await gdb_mutate(
+            client,
+            tenant,
+            table="ci_runs",
+            action="update",
+            where={"id": run_id},
+            data={"status": "failed", "finished_at": _now()},
+        )
+        raise NotFound(str(exc)) from exc
+    except runner.InvalidPipelineSpecError as exc:
+        await gdb_mutate(
+            client,
+            tenant,
+            table="ci_runs",
+            action="update",
+            where={"id": run_id},
+            data={"status": "failed", "finished_at": _now()},
+        )
+        raise UnprocessableEntity(str(exc)) from exc
+    except Exception as exc:
+        # Cualquier otra cosa (Docker Desktop caído, socket inaccesible,
+        # OSError...) es un fallo real de infraestructura, no de la
+        # petición -- sin este catch-all, la fila de ci_runs ya insertada
+        # arriba como "running" se queda así para siempre: nada la marca
+        # como fallida, y GET /runs/{id} nunca refleja que la ejecución
+        # murió. Ver docs/DECISIONS.md.
+        logger.exception("fallo inesperado del runner", extra={"run_id": run_id})
+        await gdb_mutate(
+            client,
+            tenant,
+            table="ci_runs",
+            action="update",
+            where={"id": run_id},
+            data={"status": "failed", "finished_at": _now()},
+        )
+        raise DependencyUnavailable(
+            f"el runner de CI/CD falló inesperadamente: {exc}"
+        ) from exc
 
 
 async def get_run(

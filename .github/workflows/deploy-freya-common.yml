@@ -20,7 +20,9 @@
 #      (actions/checkout), build de la imagen "dev", lint, test, security
 #      scan (pip-audit). Reproduce a mano los mismos pasos que
 #      .freya/pipeline.yaml declaraba para el viejo cicd (docs/ROADMAP.md
-#      ci-02).
+#      ci-02). Sin escaneo Trivy de imagen "runtime" aquí (a diferencia de
+#      los demás deploy-<servicio>.yml) -- freya-common no tiene esa etapa,
+#      nunca se despliega como contenedor propio.
 #
 #   2. "deploy" -- needs: check, así que si el paso 1 falla esto ni
 #      arranca: código que no pasa lint/test/security_scan nunca llega a
@@ -66,8 +68,14 @@ jobs:
       - name: Test
         run: docker run --rm --network none freya/freya-common:test pytest -v /srv/tests
 
-      - name: Security scan
+      - name: Security scan (dependencias Python)
         run: docker run --rm --env HOME=/tmp freya/freya-common:test pip-audit
+
+      # Sin escaneo Trivy de imagen "runtime" aquí, a diferencia de los
+      # demás servicios: freya-common no tiene esa etapa (sólo "build" y
+      # "dev", ver freya-common/Dockerfile) -- nunca se despliega como
+      # contenedor propio, así que no hay una imagen runtime real que
+      # escanear.
 
   deploy:
     needs: check

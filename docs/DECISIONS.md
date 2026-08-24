@@ -676,3 +676,89 @@ documentado en la entrada de migración a GitHub), y `project-manager` en
 concreto tiene datos reales en uso (`gamification` sincroniza XP desde
 ahí). Apagarlos ahora rompería funcionalidad real que el usuario sigue
 usando, no es optimización -- sería regresión disfrazada de ahorro.
+
+---
+
+## 2026-08-24 — Más allá de OWASP: API Security Top 10, Trivy, CIS Docker Benchmark
+
+Pedido del usuario: "además de OWASP, que más podrías agregar? ... hazlo
+todo, cuando acabes apagas."
+
+**OWASP API Security Top 10** (distinto del Top 10 web general -- pensado
+para APIs REST como las de Freya). Repaso categoría por categoría:
+- API1 BOLA -- ya cubierto (IDOR de `storage` en la auditoría de bugs,
+  `_check_namespace` en `secrets` confirmado en las 9 rutas).
+- API3 Broken Object Property Level Auth -- confirmado que
+  `_PROFILE_FIELDS` de `auth` nunca incluye `password_hash`; los
+  modelos Pydantic de creación nunca aceptan `id` del caller (siempre
+  `new_id()` server-side).
+- **API4 Unrestricted Resource Consumption -- hallazgo real, arreglado.**
+  `POST /pipelines/{id}/trigger` de `cicd` no tenía ningún límite:
+  cada disparo hace un `docker build` + `docker run` de verdad
+  (`runner.run_standard_tests`), y nada impedía N triggers simultáneos
+  lanzando N builds a la vez -- el mismo patrón de contención que ya
+  causó horas de "unhealthy transitorio" esta sesión, pero aquí
+  disparable a demanda por cualquiera con `write:cicd`. Arreglo:
+  `cicd/app/domain/runs.py` gana un `asyncio.Semaphore(2)` real (no sólo
+  una ventana de tiempo, que no habría evitado que 2 triggers
+  simultáneos se solaparan) -- la fila de `ci_runs` ahora pasa por
+  `queued` de verdad mientras espera un hueco, con un tope de espera de
+  5 min antes de fallar con un error claro.
+- API5 Broken Function Level Auth -- escaneado programáticamente: cada
+  ruta de los 8 servicios no-auth tiene `require_permissions`/`AdminDep`/
+  `UserDep`; las únicas rutas sin gate son las de `auth` que por
+  definición no pueden tenerlo (sign-in, sign-up, refresh-token,
+  jwks.json...).
+- API7 SSRF, API9 Improper Inventory -- ya revisados en el repaso de
+  seguridad anterior.
+- API10 Unsafe Consumption of APIs -- revisado
+  `gamification/app/domain/github_task_sync.py`: sólo lee `labels`
+  (regex estricta `^difficulty:([1-5])$`) y el número de issue de la
+  respuesta de GitHub; nunca lee ni guarda el título ni el cuerpo del
+  issue, así que no hay vector de XSS almacenado aunque `frontend`
+  llegara a mostrar datos de GitHub sin escapar en el futuro.
+
+**Escaneo de imagen (Trivy)** -- complementa a `pip-audit`, que sólo mira
+dependencias Python: Trivy escanea la imagen `runtime` completa
+(incluido `python:3.12-slim` y sus paquetes `apt`, que `pip-audit` nunca
+ve). Nuevo paso en `templates/github-workflow/deploy.yml` (y los 8
+workflows regenerados desde ella): construye la imagen `runtime` de
+verdad (no la `dev` que ya se escanea con pip-audit) y falla el job
+`check` sólo en `CRITICAL` con parche disponible
+(`ignore-unfixed: true`) -- bloquear en `HIGH` o en CVEs sin parche
+convertiría el pipeline en un muro sin salida. `freya-common` queda
+excluido de este paso a propósito: no tiene etapa `runtime` (nunca se
+despliega como contenedor propio), así que no hay imagen que escanear.
+
+**CIS Docker Benchmark 5.28 (límite de PIDs)** -- ningún
+`docker-compose.yml` de los 10 servicios propios tenía `pids` fijado:
+sin él, nada frena un fork-bomb dentro de un contenedor si alguna vez
+apareciera una vulnerabilidad que permitiera lanzar procesos arbitrarios.
+Añadido en `deploy.resources.limits.pids` de los 10 (128 para los 7
+servicios FastAPI puros; 256 para `git`/`cicd`, que sí lanzan
+subprocesos reales con más profundidad -- `git`, y `docker build`/`docker
+run` respectivamente). Nota técnica encontrada en vivo: el campo
+"pids_limit" de nivel de servicio y "deploy.resources.limits.pids" son,
+para Docker Compose, el mismo ajuste bajo dos nombres -- con un bloque
+`deploy:` ya presente (los 10 lo tienen, para cpu/memoria), fijar
+`pids_limit` aparte hace que `docker compose config` rechace el fichero
+entero ("can't set distinct values"). Van siempre juntos bajo
+`deploy.resources.limits`, nunca como campo de servicio aparte.
+
+**Resto del CIS Docker Benchmark, revisado sin cambios:** `no-new-
+privileges`, `cap_drop: ALL`, `read_only: true`, límites de cpu/memoria
+y usuario no-root ya estaban en los 10 servicios propios desde antes.
+Las imágenes de terceros (Postgres, Grafana, VictoriaMetrics, Loki,
+Traefik) no tienen el mismo nivel de endurecimiento por motivos ya
+razonados (necesitan escribir su propio directorio de datos, o en el
+caso de Traefik podrían necesitar una capability para el puerto 443) --
+no se ha tocado nada ahí en esta pasada.
+
+**Peligro real repetido durante este mismo trabajo:** el runner
+autoalojado, arrancado para drenar la cola de CI pendiente, hizo `git
+reset --hard origin/main` sobre este mismo directorio MIENTRAS se
+escribían los cambios de arriba -- se perdieron dos ediciones sin
+commitear (el fix de `cicd` y la plantilla de Trivy) y hubo que
+rehacerlas. Confirma en vivo la advertencia ya escrita en
+`docs/RUNBOOK.md`: no dejar el runner corriendo mientras hay cambios
+sueltos en el árbol de trabajo.

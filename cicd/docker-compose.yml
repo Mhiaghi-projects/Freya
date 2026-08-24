@@ -63,6 +63,15 @@ services:
         limits:
           cpus: "0.50"
           memory: 256M
+          # CIS Docker Benchmark 5.28: sin esto, nada frena un fork-bomb
+          # dentro del contenedor. Más margen que el resto de servicios
+          # (256, no 128): cada pipeline dispara subprocesos reales de
+          # "docker build"/"docker run" (app/domain/runner.py), y con el
+          # semáforo de runs.py nuevo pueden ser hasta 2 a la vez. Va aquí,
+          # no en el "pids_limit" de nivel de servicio -- con "deploy:" ya
+          # presente, Compose trata ambos como el mismo ajuste y no deja
+          # fijarlos por separado.
+          pids: 256
 
     labels:
       freya.service: "cicd"

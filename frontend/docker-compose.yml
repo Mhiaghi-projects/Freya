@@ -65,6 +65,13 @@ services:
         limits:
           cpus: "0.50"
           memory: 256M
+          # CIS Docker Benchmark 5.28: sin esto, nada frena un fork-bomb
+          # dentro del contenedor -- --workers 1 no necesita más de un
+          # puñado de PIDs en operación normal. Va aquí, no en el
+          # "pids_limit" de nivel de servicio -- con "deploy:" ya presente,
+          # Compose trata ambos como el mismo ajuste y no deja fijarlos por
+          # separado.
+          pids: 128
 
     logging:
       driver: json-file

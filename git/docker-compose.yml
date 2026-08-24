@@ -51,6 +51,13 @@ services:
         limits:
           cpus: "0.50"
           memory: 256M
+          # CIS Docker Benchmark 5.28: sin esto, nada frena un fork-bomb
+          # dentro del contenedor. Más margen que el resto de servicios
+          # (256, no 128): éste sí lanza subprocesos reales (git) con
+          # cierta profundidad. Va aquí, no en el "pids_limit" de nivel de
+          # servicio -- con "deploy:" ya presente, Compose trata ambos
+          # como el mismo ajuste y no deja fijarlos por separado.
+          pids: 256
 
     labels:
       freya.service: "git"
