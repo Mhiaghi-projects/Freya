@@ -41,9 +41,13 @@ ClaimsDep = Annotated[dict[str, Any], Depends(authenticated)]
 async def user_id_of(claims: ClaimsDep) -> str:
     """Todas las rutas de gamification son de autoservicio -- gamifican a
     la persona dueña del token, nunca a otra. Un token de servicio no tiene
-    un 'yo' que gamificar."""
+    un 'yo' que gamificar. Tampoco un admin (pedido explícito del usuario):
+    gamification es para cuentas 'user' (hábitos, XP, recompensas), no
+    para las cuentas de operación de la plataforma."""
     if "service" in claims:
         raise Forbidden("Se requiere un token de usuario, no de servicio")
+    if claims.get("role") == "admin":
+        raise Forbidden("Gamification no está disponible para cuentas admin")
     return claims["sub"]
 
 

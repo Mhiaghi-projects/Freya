@@ -101,6 +101,12 @@ async function boot() {
     document.querySelector('a[data-route="admin-users"]').classList.toggle(
       "hidden", currentUser.role !== "admin"
     );
+    // Gamification es de autoservicio para cuentas "user" (hábitos, XP,
+    // recompensas) -- una cuenta admin no tiene "yo" que gamificar (pedido
+    // explícito del usuario, ver gamification/app/deps.py:user_id_of).
+    document.querySelector('a[data-route="progress"]').classList.toggle(
+      "hidden", currentUser.role === "admin"
+    );
     showScreen("app");
     router();
   } catch {
@@ -193,109 +199,146 @@ route("git", async (content, [repoId]) => {
   }
 });
 
-// --- storage ------------------------------------------------------------
-route("storage", async (content, [bucket]) => {
-  if (!bucket) {
-    content.appendChild(el("h2", { class: "page-title" }, "Storage"));
+// --- storage (Mi Drive) --------------------------------------------------
+// Cada usuario tiene su propio espacio en el bucket reservado "users"
+// (docs/ARCHITECTURE.md §2.1) -- storage aplica el aislamiento por dueño
+// en su propia API (storage/app/api/objects.py:_check_user_bucket_access),
+// así que nunca hace falta elegir ni crear un bucket: siempre es
+// "users/{tu_id}/...". Las carpetas no son un concepto real de storage --
+// se simulan con "/" en la clave, y una carpeta vacía se representa con un
+// objeto ".keep" (mismo truco que cualquier consola de S3).
+async function driveUpload(key, file) {
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  const res = await fetch(`/api/storage/users/${encodedKey}`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+  });
+  if (!res.ok) {
+    const envelope = await res.json().catch(() => null);
+    throw new Error(envelope && envelope.error ? envelope.error.message : `HTTP ${res.status}`);
+  }
+}
 
-    const bucketForm = el("form", { class: "inline-form" },
-      el("input", { type: "text", placeholder: "nombre del bucket", id: "nb-name", required: "true", pattern: "[a-z0-9-]+" }),
-      el("button", { class: "btn", type: "submit" }, "Crear bucket"),
-    );
-    const bucketError = el("p", { class: "error hidden" });
-    content.appendChild(bucketForm);
-    content.appendChild(bucketError);
-    bucketForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      bucketError.classList.add("hidden");
-      try {
-        const name = document.getElementById("nb-name").value;
-        await api("PUT", `/api/storage/buckets/${encodeURIComponent(name)}`, {});
-        location.hash = `#/storage/${name}`;
-      } catch (err) {
-        bucketError.textContent = err.message;
-        bucketError.classList.remove("hidden");
-      }
-    });
+route("storage", async (content, pathParts) => {
+  const decodedParts = pathParts.map(decodeURIComponent).filter(Boolean);
+  const prefix = `${currentUser.user_id}/${decodedParts.length ? decodedParts.join("/") + "/" : ""}`;
 
-    const buckets = await api("GET", "/api/storage/buckets");
-    if (!buckets.length) { content.appendChild(el("p", { class: "empty" }, "Sin buckets todavía.")); return; }
-    content.appendChild(el("div", { class: "grid" }, buckets.map((b) =>
-      el("div", { class: "card clickable", onclick: () => { location.hash = `#/storage/${b.bucket}`; } },
-        el("h3", {}, b.bucket), el("p", { class: "muted" }, b.versioning ? "con versionado" : "sin versionado"))
-    )));
-    return;
+  content.appendChild(el("h2", { class: "page-title" }, "Mi Drive"));
+
+  const crumbs = [el("a", { onclick: () => { location.hash = "#/storage"; } }, "Mi Drive")];
+  for (let i = 0; i < decodedParts.length; i++) {
+    const target = decodedParts.slice(0, i + 1).map(encodeURIComponent).join("/");
+    crumbs.push(" / ");
+    crumbs.push(el("a", { onclick: () => { location.hash = `#/storage/${target}`; } }, decodedParts[i]));
+  }
+  content.appendChild(el("div", { class: "breadcrumb" }, crumbs));
+
+  const folderInput = el("input", { type: "text", placeholder: "nombre de la carpeta", id: "nf-name" });
+  const folderForm = el("form", { class: "inline-form" }, folderInput,
+    el("button", { class: "btn btn-secondary", type: "submit" }, "Nueva carpeta"));
+  const fileInput = el("input", { type: "file", id: "up-file", required: "true" });
+  const uploadForm = el("form", { class: "inline-form" }, fileInput,
+    el("button", { class: "btn", type: "submit" }, "Subir archivo"));
+  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm));
+  const toolbarError = el("p", { class: "error hidden" });
+  content.appendChild(toolbarError);
+  function showError(err) {
+    toolbarError.textContent = err.message;
+    toolbarError.classList.remove("hidden");
   }
 
-  content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = "#/storage"; } }, "Storage"), ` / ${bucket}`));
-  content.appendChild(el("h2", { class: "page-title" }, bucket));
-
-  // Subida real, en streaming (fetch con un File como body) -- api() no
-  // sirve aquí porque siempre manda JSON.stringify, nunca bytes crudos.
-  const fileInput = el("input", { type: "file", id: "up-file", required: "true" });
-  const keyInput = el("input", { type: "text", placeholder: "ruta (opcional, ej: fotos/2026/img.jpg)", id: "up-key" });
-  const uploadForm = el("form", { class: "inline-form" }, fileInput, keyInput,
-    el("button", { class: "btn", type: "submit" }, "Subir"));
-  const uploadError = el("p", { class: "error hidden" });
-  content.appendChild(uploadForm);
-  content.appendChild(uploadError);
-
   const table = el("table", {},
-    el("thead", {}, el("tr", {}, el("th", {}, "Clave"), el("th", {}, "Tamaño"), el("th", {}, "Modificado"), el("th", {}, ""))),
+    el("thead", {}, el("tr", {}, el("th", {}, "Nombre"), el("th", {}, "Tamaño"), el("th", {}, "Modificado"), el("th", {}, ""))),
     el("tbody", {}),
   );
-  const emptyMsg = el("p", { class: "empty hidden" }, "Bucket vacío.");
+  const emptyMsg = el("p", { class: "empty hidden" }, "Carpeta vacía.");
   content.appendChild(table);
   content.appendChild(emptyMsg);
 
-  async function renderObjects() {
-    const objects = await api("GET", `/api/storage/${bucket}`);
-    const items = objects.items || objects.objects || objects;
+  async function listPrefix(p) {
+    const res = await api("GET", `/api/storage/users?prefix=${encodeURIComponent(p)}&limit=200`);
+    return res.objects || res.items || res;
+  }
+
+  async function deleteFolder(folderPrefix) {
+    for (const o of await listPrefix(folderPrefix)) {
+      const encodedKey = o.key.split("/").map(encodeURIComponent).join("/");
+      await api("DELETE", `/api/storage/users/${encodedKey}`);
+    }
+  }
+
+  async function load() {
+    const items = await listPrefix(prefix);
+    const folders = new Set();
+    const files = [];
+    for (const o of items) {
+      const rel = o.key.slice(prefix.length);
+      if (!rel) continue;
+      const slash = rel.indexOf("/");
+      if (slash === -1) files.push({ ...o, name: rel });
+      else folders.add(rel.slice(0, slash));
+    }
+
     const tbody = table.querySelector("tbody");
     tbody.innerHTML = "";
-    emptyMsg.classList.toggle("hidden", Array.isArray(items) && items.length > 0);
-    if (!Array.isArray(items)) return;
-    for (const o of items) {
-      const encodedKey = o.key.split("/").map(encodeURIComponent).join("/");
-      tbody.appendChild(el("tr", {}, el("td", {}, o.key), el("td", {}, String(o.size ?? "")),
-        el("td", {}, o.last_modified || o.updated_at || ""),
+    emptyMsg.classList.toggle("hidden", folders.size > 0 || files.length > 0);
+
+    for (const name of [...folders].sort()) {
+      const target = [...decodedParts, name].map(encodeURIComponent).join("/");
+      tbody.appendChild(el("tr", { class: "clickable", onclick: () => { location.hash = `#/storage/${target}`; } },
+        el("td", {}, `📁 ${name}`), el("td", {}, ""), el("td", {}, ""),
+        el("td", {}, el("button", {
+          class: "btn btn-danger", type: "button",
+          onclick: async (ev) => {
+            ev.stopPropagation();
+            if (!confirm(`¿Borrar la carpeta '${name}' y todo su contenido?`)) return;
+            await deleteFolder(`${prefix}${name}/`);
+            await load();
+          },
+        }, "Borrar"))));
+    }
+    for (const f of files.filter((f) => f.name !== ".keep").sort((a, b) => a.name.localeCompare(b.name))) {
+      const fullKey = `${prefix}${f.name}`;
+      const encodedKey = fullKey.split("/").map(encodeURIComponent).join("/");
+      tbody.appendChild(el("tr", {}, el("td", {}, `📄 ${f.name}`), el("td", {}, String(f.size ?? "")),
+        el("td", {}, f.last_modified || f.updated_at || ""),
         el("td", {},
-          el("a", { href: `/api/storage/${encodeURIComponent(bucket)}/${encodedKey}`, target: "_blank", class: "btn btn-secondary" }, "Descargar"),
+          el("a", { href: `/api/storage/users/${encodedKey}`, target: "_blank", class: "btn btn-secondary" }, "Descargar"),
           el("button", {
             class: "btn btn-danger", type: "button",
             onclick: async () => {
-              if (!confirm(`¿Borrar '${o.key}'?`)) return;
-              await api("DELETE", `/api/storage/${encodeURIComponent(bucket)}/${encodedKey}`);
-              await renderObjects();
+              if (!confirm(`¿Borrar '${f.name}'?`)) return;
+              await api("DELETE", `/api/storage/users/${encodedKey}`);
+              await load();
             },
           }, "Borrar"))));
     }
   }
-  await renderObjects();
+  await load();
+
+  folderForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    toolbarError.classList.add("hidden");
+    const name = folderInput.value.trim();
+    if (!name) return;
+    try {
+      await driveUpload(`${prefix}${name}/.keep`, new File([], ".keep"));
+      folderForm.reset();
+      await load();
+    } catch (err) { showError(err); }
+  });
 
   uploadForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    uploadError.classList.add("hidden");
+    toolbarError.classList.add("hidden");
     const file = fileInput.files[0];
-    const key = keyInput.value.trim() || file.name;
-    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
     try {
-      const res = await fetch(`/api/storage/${encodeURIComponent(bucket)}/${encodedKey}`, {
-        method: "PUT",
-        credentials: "same-origin",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      if (!res.ok) {
-        const envelope = await res.json().catch(() => null);
-        throw new Error(envelope && envelope.error ? envelope.error.message : `HTTP ${res.status}`);
-      }
+      await driveUpload(`${prefix}${file.name}`, file);
       uploadForm.reset();
-      await renderObjects();
-    } catch (err) {
-      uploadError.textContent = err.message;
-      uploadError.classList.remove("hidden");
-    }
+      await load();
+    } catch (err) { showError(err); }
   });
 });
 
