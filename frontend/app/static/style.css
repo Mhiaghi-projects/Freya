@@ -222,6 +222,15 @@ tr.clickable:hover { background: var(--panel-2); }
   color: var(--text);
 }
 
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--bad);
+  color: var(--bad);
+  margin-left: 6px;
+}
+
+.btn-danger:hover { background: var(--bad); color: white; }
+
 .breadcrumb {
   font-size: 13px;
   color: var(--muted);

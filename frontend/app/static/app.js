@@ -197,8 +197,29 @@ route("git", async (content, [repoId]) => {
 route("storage", async (content, [bucket]) => {
   if (!bucket) {
     content.appendChild(el("h2", { class: "page-title" }, "Storage"));
+
+    const bucketForm = el("form", { class: "inline-form" },
+      el("input", { type: "text", placeholder: "nombre del bucket", id: "nb-name", required: "true", pattern: "[a-z0-9-]+" }),
+      el("button", { class: "btn", type: "submit" }, "Crear bucket"),
+    );
+    const bucketError = el("p", { class: "error hidden" });
+    content.appendChild(bucketForm);
+    content.appendChild(bucketError);
+    bucketForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      bucketError.classList.add("hidden");
+      try {
+        const name = document.getElementById("nb-name").value;
+        await api("PUT", `/api/storage/buckets/${encodeURIComponent(name)}`, {});
+        location.hash = `#/storage/${name}`;
+      } catch (err) {
+        bucketError.textContent = err.message;
+        bucketError.classList.remove("hidden");
+      }
+    });
+
     const buckets = await api("GET", "/api/storage/buckets");
-    if (!buckets.length) { content.appendChild(el("p", { class: "empty" }, "Sin buckets.")); return; }
+    if (!buckets.length) { content.appendChild(el("p", { class: "empty" }, "Sin buckets todavía.")); return; }
     content.appendChild(el("div", { class: "grid" }, buckets.map((b) =>
       el("div", { class: "card clickable", onclick: () => { location.hash = `#/storage/${b.bucket}`; } },
         el("h3", {}, b.bucket), el("p", { class: "muted" }, b.versioning ? "con versionado" : "sin versionado"))
@@ -206,21 +227,76 @@ route("storage", async (content, [bucket]) => {
     return;
   }
 
-  const objects = await api("GET", `/api/storage/${bucket}`);
   content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = "#/storage"; } }, "Storage"), ` / ${bucket}`));
   content.appendChild(el("h2", { class: "page-title" }, bucket));
-  const items = objects.items || objects.objects || objects;
-  if (!Array.isArray(items) || !items.length) {
-    content.appendChild(el("p", { class: "empty" }, "Bucket vacío."));
-    return;
-  }
-  content.appendChild(el("table", {},
+
+  // Subida real, en streaming (fetch con un File como body) -- api() no
+  // sirve aquí porque siempre manda JSON.stringify, nunca bytes crudos.
+  const fileInput = el("input", { type: "file", id: "up-file", required: "true" });
+  const keyInput = el("input", { type: "text", placeholder: "ruta (opcional, ej: fotos/2026/img.jpg)", id: "up-key" });
+  const uploadForm = el("form", { class: "inline-form" }, fileInput, keyInput,
+    el("button", { class: "btn", type: "submit" }, "Subir"));
+  const uploadError = el("p", { class: "error hidden" });
+  content.appendChild(uploadForm);
+  content.appendChild(uploadError);
+
+  const table = el("table", {},
     el("thead", {}, el("tr", {}, el("th", {}, "Clave"), el("th", {}, "Tamaño"), el("th", {}, "Modificado"), el("th", {}, ""))),
-    el("tbody", {}, items.map((o) =>
-      el("tr", {}, el("td", {}, o.key), el("td", {}, String(o.size ?? "")), el("td", {}, o.last_modified || o.updated_at || ""),
-        el("td", {}, el("a", { href: `/api/storage/${encodeURIComponent(bucket)}/${o.key.split("/").map(encodeURIComponent).join("/")}`, target: "_blank", class: "btn btn-secondary" }, "Descargar")))
-    ))
-  ));
+    el("tbody", {}),
+  );
+  const emptyMsg = el("p", { class: "empty hidden" }, "Bucket vacío.");
+  content.appendChild(table);
+  content.appendChild(emptyMsg);
+
+  async function renderObjects() {
+    const objects = await api("GET", `/api/storage/${bucket}`);
+    const items = objects.items || objects.objects || objects;
+    const tbody = table.querySelector("tbody");
+    tbody.innerHTML = "";
+    emptyMsg.classList.toggle("hidden", Array.isArray(items) && items.length > 0);
+    if (!Array.isArray(items)) return;
+    for (const o of items) {
+      const encodedKey = o.key.split("/").map(encodeURIComponent).join("/");
+      tbody.appendChild(el("tr", {}, el("td", {}, o.key), el("td", {}, String(o.size ?? "")),
+        el("td", {}, o.last_modified || o.updated_at || ""),
+        el("td", {},
+          el("a", { href: `/api/storage/${encodeURIComponent(bucket)}/${encodedKey}`, target: "_blank", class: "btn btn-secondary" }, "Descargar"),
+          el("button", {
+            class: "btn btn-danger", type: "button",
+            onclick: async () => {
+              if (!confirm(`¿Borrar '${o.key}'?`)) return;
+              await api("DELETE", `/api/storage/${encodeURIComponent(bucket)}/${encodedKey}`);
+              await renderObjects();
+            },
+          }, "Borrar"))));
+    }
+  }
+  await renderObjects();
+
+  uploadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    uploadError.classList.add("hidden");
+    const file = fileInput.files[0];
+    const key = keyInput.value.trim() || file.name;
+    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+    try {
+      const res = await fetch(`/api/storage/${encodeURIComponent(bucket)}/${encodedKey}`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      if (!res.ok) {
+        const envelope = await res.json().catch(() => null);
+        throw new Error(envelope && envelope.error ? envelope.error.message : `HTTP ${res.status}`);
+      }
+      uploadForm.reset();
+      await renderObjects();
+    } catch (err) {
+      uploadError.textContent = err.message;
+      uploadError.classList.remove("hidden");
+    }
+  });
 });
 
 // --- cicd ------------------------------------------------------------
