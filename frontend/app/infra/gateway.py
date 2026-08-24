@@ -30,6 +30,7 @@ _BACKENDS = {
     "cicd": lambda s: s.cicd_url,
     "gestor-monitoring": lambda s: s.gestor_monitoring_url,
     "gamification": lambda s: s.gamification_url,
+    "athenea": lambda s: s.athenea_url,
 }
 
 
