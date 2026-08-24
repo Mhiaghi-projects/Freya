@@ -33,7 +33,14 @@ async def list_runs(pipeline_id: str, client: CicdClient, limit: int = 20) -> li
 
 @router.post("/pipelines/{pipeline_id}/trigger", status_code=201)
 async def trigger_pipeline(pipeline_id: str, client: CicdClient) -> dict:
-    return ServiceClient.data(await client.post(f"/pipelines/{pipeline_id}/trigger"))
+    # cicd exige un cuerpo (TriggerRequest), aunque todos sus campos tengan
+    # default -- sin json={} aquí, la petición nunca llevaba Content-Type
+    # ni cuerpo alguno y cicd la rechazaba con 422 (bug real, preexistente:
+    # el botón "Disparar pipeline" del panel estaba roto para cualquier
+    # pipeline, encontrado al integrar este cambio con el CI/CD propio).
+    return ServiceClient.data(
+        await client.post(f"/pipelines/{pipeline_id}/trigger", json={})
+    )
 
 
 @router.get("/runs/{run_id}")
