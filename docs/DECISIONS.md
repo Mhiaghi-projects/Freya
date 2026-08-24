@@ -762,3 +762,55 @@ commitear (el fix de `cicd` y la plantilla de Trivy) y hubo que
 rehacerlas. Confirma en vivo la advertencia ya escrita en
 `docs/RUNBOOK.md`: no dejar el runner corriendo mientras hay cambios
 sueltos en el árbol de trabajo.
+
+---
+
+## 2026-08-24 — RAM, segunda pasada: el propio error de operación, no código
+
+Pedido del usuario: "optimiza Freya al maximo. Debe consumir la minima
+RAM posible" (repetido tras la pasada de `storage`/`MALLOC_ARENA_MAX` de
+antes).
+
+**Hallazgo real, no de código sino de operación:** al levantar la
+plataforma de nuevo tras el apagado, un `docker start` general incluyó
+`freya-dashboards` (Grafana) -- pero `services/dashboards/docker-
+compose.yml` lo documenta explícitamente como "apagado por defecto"
+(ROADMAP.md mon-07, `profiles: [dashboards]`, sólo se levanta con `.
+\freya.ps1 up dashboards`, que añade el profile a mano). `docker start`
+opera sobre un contenedor YA CREADO sin mirar profiles en absoluto, así
+que el opt-out del propio diseño no protegió nada aquí -- Grafana quedó
+corriendo por un `docker start` genérico, no por decisión de nadie.
+Estaba consumiendo 209.5/220 MiB, con diferencia el mayor consumidor de
+toda la plataforma después del arreglo de `storage`. Parado
+(`docker stop freya-dashboards`) -- recuperable en cualquier momento con
+`.\freya.ps1 up dashboards` cuando de verdad haga falta ver un panel.
+
+**Revisado y descartado, con motivo, antes de tocar nada:**
+- Límites del pool de `httpx` (`freya_common/http.py`,
+  `max_connections=32`) -- httpx no reserva conexiones por adelantado,
+  sólo abre hasta el tope bajo carga real; bajarlo no reduciría memoria
+  ya en uso hoy, sólo el techo bajo concurrencia, que este platform no
+  alcanza en la práctica.
+- Pool de asyncpg de `gestor-db` (`pool_max_size=10`) -- cada conexión
+  extra sólo se abre bajo demanda (arranca en `pool_min_size=2`), y
+  bajarlo arriesgaría contención justo en el escenario que más ha costado
+  esta sesión: varios servicios redesplegando/consultando a la vez
+  durante una tanda de CI. El ahorro de memoria sería marginal frente al
+  riesgo de reintroducir el propio patrón de "unhealthy transitorio" que
+  ya se investigó a fondo.
+- `services/database/docker-compose.yml` -- ya afinado desde una sesión
+  anterior (`db-03`: `shared_buffers=64MB`, `work_mem=4MB`,
+  `max_connections=40`, objetivo explícito "quedarse bajo 256 MB en
+  reposo"). En uso real: 46 MiB. Nada que mejorar aquí hoy.
+- `metrics`/`logs` (VictoriaMetrics/Loki) -- ya muy por debajo de su
+  límite (45 MiB / 160M y 3 MiB / 160M) sin tocar nada. Ningún Dockerfile
+  usa `--reload` (que añadiría un proceso vigía de ficheros); todos usan
+  `uvicorn[standard]`, que ya trae `uvloop` -- sin margen real ahí.
+
+**Total con la plataforma completa arriba (los 14 servicios que corren
+siempre, sin `dashboards` ni `github-runner`, este último sólo activo
+mientras hay CI en curso):** ~703 MiB, frente a los ~1.36-1.45 GiB
+reportados por el usuario al empezar este tramo de optimización -- caída
+de aproximadamente un tercio a la mitad, la mayor parte gracias al
+streaming real de `storage` (~200 MiB) y a no dejar Grafana corriendo por
+error (~210 MiB).
