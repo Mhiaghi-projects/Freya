@@ -266,8 +266,10 @@ route("storage", async (content, pathParts) => {
   const fileInput = el("input", { type: "file", id: "up-file", required: "true", multiple: "true" });
   const uploadForm = el("form", { class: "inline-form" }, fileInput,
     el("button", { class: "btn", type: "submit" }, "Subir archivos"));
+  const selectAllBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Seleccionar todo");
   const downloadSelectedBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Descargar seleccionados");
-  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm, downloadSelectedBtn));
+  const deleteSelectedBtn = el("button", { class: "btn btn-danger", type: "button" }, "Eliminar seleccionados");
+  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm, selectAllBtn, downloadSelectedBtn, deleteSelectedBtn));
 
   const progressLabel = el("span", { class: "muted" });
   const progressBar = el("progress", { max: "100", value: "0" });
@@ -359,6 +361,26 @@ route("storage", async (content, pathParts) => {
     const keys = [...table.querySelectorAll(".file-select:checked")].map((cb) => cb.dataset.key);
     if (!keys.length) { showError(new Error("Selecciona al menos un archivo para descargar")); return; }
     for (const key of keys) driveDownload(key);
+  });
+
+  selectAllBtn.addEventListener("click", () => {
+    const boxes = [...table.querySelectorAll(".file-select")];
+    const allChecked = boxes.length > 0 && boxes.every((cb) => cb.checked);
+    for (const cb of boxes) cb.checked = !allChecked;
+  });
+
+  deleteSelectedBtn.addEventListener("click", async () => {
+    toolbarError.classList.add("hidden");
+    const keys = [...table.querySelectorAll(".file-select:checked")].map((cb) => cb.dataset.key);
+    if (!keys.length) { showError(new Error("Selecciona al menos un archivo para eliminar")); return; }
+    if (!confirm(`¿Borrar ${keys.length} archivo(s) seleccionado(s)?`)) return;
+    try {
+      for (const key of keys) {
+        const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+        await api("DELETE", `/api/storage/users/${encodedKey}`);
+      }
+      await load();
+    } catch (err) { showError(err); }
   });
 
   folderForm.addEventListener("submit", async (e) => {
