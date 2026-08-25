@@ -37,7 +37,15 @@ OUT="$SERVICE/.deploy-compose.yml"
 
 trap 'rm -f "$OUT"' EXIT
 
-sed "s|\.\./infra|${WIN_ROOT}/infra|g" "$SRC" > "$OUT"
+# El mismo gotcha aplica a cicd, único servicio que además monta todo el
+# repo como contexto de build (`- ..:/workspace:ro`, para `docker build`
+# dentro del propio pipeline) -- encontrado en vivo: el sed de arriba sólo
+# reescribía "../infra", así que esa línea seguía resolviendo a un
+# "/workspace" vacío y cicd no encontraba ningún Dockerfile de servicio.
+sed \
+  -e "s|\.\./infra|${WIN_ROOT}/infra|g" \
+  -e "s|- \.\.:/workspace|- ${WIN_ROOT}:/workspace|g" \
+  "$SRC" > "$OUT"
 
 docker compose --project-name freya -f "$OUT" --env-file .env up -d --build
 
