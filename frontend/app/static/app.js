@@ -1127,11 +1127,12 @@ route("admin-tenants", async (content) => {
   async function deleteTenant(t) {
     tenantsError.classList.add("hidden");
     // Aviso de antemano, con el peso que corresponde a un borrado que se
-    // lleva TODO (storage, git, cicd, project-manager de ese proyecto) sin
-    // vuelta atrás -- pedido explícito del usuario. Escribir el id a mano
-    // es más difícil de disparar sin querer que un simple confirm().
+    // lleva TODO (storage, git, cicd, project-manager y la base de datos
+    // propia de ese proyecto) sin vuelta atrás -- pedido explícito del
+    // usuario. Escribir el id a mano es más difícil de disparar sin querer
+    // que un simple confirm().
     const typed = prompt(
-      `Esto borra el tenant '${t.id}' (${t.name}) y TODO lo que tiene: storage, repositorios git, pipelines de CI/CD y proyectos. No se puede deshacer.\n\nEscribe "${t.id}" para confirmar:`
+      `Esto borra el tenant '${t.id}' (${t.name}) y TODO lo que tiene: storage, repositorios git, pipelines de CI/CD, proyectos y su base de datos propia (gestor-db). No se puede deshacer.\n\nEscribe "${t.id}" para confirmar:`
     );
     if (typed !== t.id) return;
     try {

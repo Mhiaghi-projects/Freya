@@ -23,7 +23,7 @@ from freya_common import (
     create_app,
 )
 
-from app.api import migrations, mutate, query, schemas, tables, transaction
+from app.api import admin, migrations, mutate, query, schemas, tables, transaction
 from app.config import get_settings
 from app.domain.pool import Database
 
@@ -92,3 +92,4 @@ app.include_router(transaction.router)
 app.include_router(schemas.router)
 app.include_router(tables.router)
 app.include_router(migrations.router)
+app.include_router(admin.router)

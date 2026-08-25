@@ -601,8 +601,8 @@ concede por separado, servicio por servicio, vía `user_tenant_grants`
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | GET | `/api/admin/tenants` | Lista todos los tenants registrados |
-| POST | `/api/admin/tenants` | Crea el tenant y aprovisiona su schema + bucket en storage, git, cicd y project-manager (fan-out, ver `frontend/app/api/admin.py`) |
-| DELETE | `/api/admin/tenants/{tenant_id}` | Borra el tenant entero: `DROP SCHEMA ... CASCADE` (storage, git, cicd, project-manager comparten schema-por-tenant) + directorio físico de blobs + filas de `user_tenant_grants`. **Irreversible.** Rechaza `tenant_id = "freya"` con `400` — el tenant de control-plane nunca se borra |
+| POST | `/api/admin/tenants` | Crea el tenant y aprovisiona su schema + bucket en storage, git, cicd, project-manager **y gestor-db** (fan-out, ver `frontend/app/api/admin.py`) — el aprovisionamiento de gestor-db es explícito e idempotente (`POST /admin/tenants/{id}/provision`, `CREATE SCHEMA IF NOT EXISTS`), no depende de que los otros cuatro lo creen como efecto colateral de sus propias migraciones |
+| DELETE | `/api/admin/tenants/{tenant_id}` | Borra el tenant entero: **todos** sus schemas en gestor-db (`DROP SCHEMA ... CASCADE` sobre el principal, que storage/git/cicd/project-manager comparten, más cualquier `{tenant_id}_*` que el propio tenant se haya creado vía gestor-db "como un RDS", ver `gestor-db/app/api/admin.py:delete_all_schemas`) + directorio físico de blobs (buckets propios y los internos `git`/`artifacts`/`logs` que usan git/cicd por debajo) + filas de `user_tenant_grants`. **Irreversible.** Rechaza `tenant_id = "freya"` con `400` — el tenant de control-plane nunca se borra |
 | GET | `/api/admin/tenant-grants` | Servicios concedibles por tenant y sus permisos (`{"storage": ["read:storage","write:storage"], ...}`) |
 | GET | `/api/admin/users/{user_id}/tenants` | Grants actuales del usuario, por tenant |
 | PUT | `/api/admin/users/{user_id}/tenants/{tenant_id}` | Reemplaza los permisos del usuario para ese tenant (`body: {"permissions": ["read:storage","write:storage"]}`) — lista vacía retira el acceso |

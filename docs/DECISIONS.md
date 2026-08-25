@@ -978,3 +978,58 @@ flujo orquestado de `auth/app/domain/tenants.py:delete_tenant`.
 tocar y sin exponer en el gateway de frontend -- demasiado peligroso para
 un grant por tenant; sólo servicios (que ya corren sus propias migraciones
 al aprovisionar un tenant) lo usan.
+
+---
+
+## 2026-08-24 — Ciclo de vida de tenant: gestor-db se aprovisiona y se
+borra explícitamente, no por efecto colateral
+
+Pedido explícito del usuario: "cuando se crea un tenant debes que preparar
+la database tambien, y cualquier servicio que necesite preparacion (como
+storage), cuando eliminas el tenant, debes eliminar todo eso."
+
+**Hallazgo al investigar el pedido:** el schema de gestor-db para un
+tenant nuevo YA se creaba, pero nunca a propósito -- storage, git, cicd y
+project-manager llaman cada uno a `POST /migrations` de gestor-db al
+aprovisionarse (`CREATE SCHEMA IF NOT EXISTS` + sus propias tablas), y
+como los cuatro comparten el mismo nombre de schema que el tenant, el
+primero en correr ya lo dejaba listo para los demás. Funcionaba, pero por
+casualidad: si algún día alguno de esos cuatro pasos se vuelve opcional
+(un tenant que sólo quiere base de datos, sin git/storage/cicd/pm), el
+schema dejaría de crearse. Se decidió que gestor-db tenga su propio paso
+de aprovisionamiento explícito en el fan-out de creación
+(`frontend/app/api/admin.py:create_tenant`), igual que los otros cuatro
+-- `POST /admin/tenants/{id}/provision` (nuevo, `gestor-db/app/api/
+admin.py`), idempotente (`CREATE SCHEMA IF NOT EXISTS`, nunca 409 aunque
+el schema ya exista por los otros cuatro).
+
+**Hallazgo más importante, del lado de borrado:** `auth/app/domain/
+tenants.py:delete_tenant` sólo borraba el schema principal del tenant
+(`DELETE /schemas/{tenant_id}` contra gestor-db, un schema a la vez). Pero
+gestor-db "como un RDS" (ronda anterior de esta sesión) permite que un
+proyecto se cree schemas con nombre adicional dentro de su namespace
+(`resolve_schema`: `"<tenant>_algo"`, p.ej. `heracles_staging`, vía
+`POST /api/database/schemas`). Esos quedaban huérfanos para siempre al
+borrar el tenant -- el DROP CASCADE nunca los tocaba. Se agregó
+`DELETE /admin/tenants/{tenant}` (`gestor-db/app/api/admin.py:
+delete_all_schemas`): enumera `schema_name = tenant OR LIKE 'tenant_%'` en
+`information_schema.schemata` y los borra todos en una sola transacción,
+más sus filas en `public.freya_schema_migrations`. `auth/app/domain/
+tenants.py:delete_tenant` ahora llama a este endpoint en vez del anterior.
+Mismo criterio de permiso que el `DELETE /schemas/{schema}` existente:
+`require_permissions` plano sobre `write:database` -- un grant `database`
+por tenant nunca alcanza para esto, sólo admin o el flujo orquestado de
+borrado de tenant.
+
+**Aviso de antemano:** ya existía (`frontend/app/static/app.js:
+deleteTenant`, un `prompt()` que exige escribir el id del tenant a mano,
+no un simple `confirm()`) desde una ronda anterior de esta sesión. Se
+actualizó el texto del aviso para mencionar explícitamente "su base de
+datos propia (gestor-db)", que antes no aparecía listada aunque ya se
+borraba junto con el resto del schema compartido.
+
+**Descartado:** darle a gestor-db su propio endpoint de aprovisionamiento
+que también corriera migraciones propias (como storage/git/cicd/pm). No
+tiene sentido -- gestor-db no tiene tablas de plataforma que crear por
+adelantado, sólo el schema vacío; las tablas del proyecto las crea el
+propio proyecto bajo demanda cuando lo usa como su base de datos.

@@ -18,6 +18,7 @@ StorageClient = Annotated[ServiceClient, Depends(client_dep("storage"))]
 GitClient = Annotated[ServiceClient, Depends(client_dep("git"))]
 CicdClient = Annotated[ServiceClient, Depends(client_dep("cicd"))]
 ProjectManagerClient = Annotated[ServiceClient, Depends(client_dep("project-manager"))]
+GestorDbClient = Annotated[ServiceClient, Depends(client_dep("gestor-db"))]
 
 
 class UserCreate(BaseModel):
@@ -110,11 +111,21 @@ async def create_tenant(
     git_client: GitClient,
     cicd_client: CicdClient,
     pm_client: ProjectManagerClient,
+    gestor_db_client: GestorDbClient,
 ) -> dict:
     """Crea el tenant y aprovisiona el schema de cada servicio que lo usa
-    por proyecto (storage, git, cicd, project-manager) en el mismo paso
-    (pedido explícito del usuario: automatizar la creación de un tenant,
-    sólo aislamiento de datos -- sin desplegar ningún servicio nuevo)."""
+    por proyecto (storage, git, cicd, project-manager, gestor-db) en el
+    mismo paso (pedido explícito del usuario: automatizar la creación de un
+    tenant, sólo aislamiento de datos -- sin desplegar ningún servicio
+    nuevo).
+
+    gestor-db se aprovisiona explícitamente aquí, no por efecto colateral:
+    storage/git/cicd/project-manager ya crean el schema al aplicar sus
+    propias migraciones (CREATE SCHEMA IF NOT EXISTS), pero depender de eso
+    dejaría el schema sin crear si algún día alguno de esos cuatro pasos
+    se vuelve opcional. /admin/tenants/{id}/provision de gestor-db es
+    idempotente (nunca 409), así que llamarlo aquí también es seguro
+    incluso si el schema ya existe por los otros cuatro."""
     tenant = ServiceClient.data(
         await auth_client.post("/admin/tenants", json=body.model_dump())
     )
@@ -122,6 +133,7 @@ async def create_tenant(
     await git_client.post(f"/git/admin/tenants/{body.id}/provision")
     await cicd_client.post(f"/admin/tenants/{body.id}/provision")
     await pm_client.post(f"/admin/tenants/{body.id}/provision")
+    await gestor_db_client.post(f"/admin/tenants/{body.id}/provision")
     return tenant
 
 
@@ -129,13 +141,15 @@ async def create_tenant(
 async def delete_tenant(
     tenant_id: str, auth_client: AuthClient, storage_client: StorageClient
 ) -> None:
-    """Elimina el tenant: auth se lleva el schema entero (storage, git,
-    cicd y project-manager comparten ese schema -- se van todos sus datos
-    de un golpe) más el registro y los grants; storage limpia aparte los
-    bytes en disco, que viven fuera de Postgres. Pedido explícito del
-    usuario: "el admin puede eliminar tenant cargándose todo lo que tiene
-    ese tenant" -- el aviso de antemano lo muestra el panel antes de
-    llamar aquí."""
+    """Elimina el tenant: auth se lleva TODOS los schemas de gestor-db del
+    tenant (el que comparten storage/git/cicd/project-manager más cualquier
+    schema con nombre adicional que el propio tenant se haya creado vía
+    gestor-db "como un RDS") más el registro y los grants; storage limpia
+    aparte los bytes en disco (buckets propios y los internos "git",
+    "artifacts", "logs" que usan git/cicd por debajo), que viven fuera de
+    Postgres. Pedido explícito del usuario: "el admin puede eliminar tenant
+    cargándose todo lo que tiene ese tenant" -- el aviso de antemano lo
+    muestra el panel antes de llamar aquí."""
     await auth_client.delete(f"/admin/tenants/{tenant_id}")
     await storage_client.delete(f"/storage/admin/tenants/{tenant_id}")
 
