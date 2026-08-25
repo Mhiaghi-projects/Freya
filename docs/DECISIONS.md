@@ -1033,3 +1033,71 @@ que también corriera migraciones propias (como storage/git/cicd/pm). No
 tiene sentido -- gestor-db no tiene tablas de plataforma que crear por
 adelantado, sólo el schema vacío; las tablas del proyecto las crea el
 propio proyecto bajo demanda cuando lo usa como su base de datos.
+
+---
+
+## 2026-08-25 — Credenciales de tenant "como las nubes": api key + api
+secret, canjeables por un JWT de corta duración
+
+Pedido explícito del usuario: "como arreglariamos lo del tenant que
+necesita credenciales? que tal si cuando creas un tenant te da para
+descargar una key o certificado" -- seguido de "ok, que se genere api key
+con api secret. Como lo hacen las nubes" tras comparar las dos opciones
+(certificado/mTLS vs api key/secret).
+
+**Por qué api key/secret y no certificado (mTLS):** ningún servicio de
+Freya valida certificados de cliente hoy -- todo el modelo de auth es JWT
++ JWKS. Meter mTLS habría exigido una CA interna, emisión/rotación de
+certs y cambiar cómo Traefik y cada servicio terminan TLS -- arquitectura
+nueva para resolver algo que el JWT ya sabe hacer. Api key/secret es
+literalmente el mismo patrón que ya usan las cuentas de servicio de la
+propia malla (`auth/app/domain/accounts.py`, `POST /authenticate/service`)
+-- Argon2id sobre el secreto, sólo se guarda el hash, se canjea por un JWT.
+
+**Diseño:** nueva tabla `tenant_api_keys` (plano de control, junto a
+`tenants`/`user_tenant_grants`) -- `key_id` público (prefijo `FRAK`,
+alfabeto sin `0/1/O/I` para que se transcriba a mano sin ambigüedad, como
+un Access Key ID de AWS) + `secret_hash`. `POST /admin/tenants/{id}/
+api-keys` (role: admin, desde el panel) genera el par y devuelve
+`api_secret` **en claro una única vez** -- ni el panel ni la API lo
+vuelven a mostrar después, sólo queda el hash. `POST /api/v1/auth/token`
+(público, en auth directamente -- nunca por el gateway de frontend, que
+exige sesión de navegador) canjea `key_id`/`api_secret` por un JWT de
+`access_token_service_ttl_seconds` de vida -- sin refresh token: un script
+externo vuelve a llamar aquí con las mismas credenciales cuando expira,
+igual que un client_credentials grant.
+
+**El JWT resultante es, a propósito, estructuralmente idéntico a uno de
+usuario:** mismo `tenant_grants: {tenant: permissions}` que storage/git/
+cicd/project-manager/gestor-db ya saben leer (`require_service_access`/
+`require_db_access`) -- cero cambios en esos cinco servicios. `permissions`
+plano queda siempre vacío y `role: "tenant_key"`: una tenant_api_key nunca
+tiene alcance más allá de TENANT_GRANTABLE_PERMISSIONS de su propio
+tenant, igual que un grant humano por proyecto -- nunca un permiso plano
+de la malla interna, y por construcción no puede pasar ningún chequeo de
+`role == "admin"`.
+
+**Limitación real encontrada al redactar el hint del panel:** Traefik
+(`services/traefik/dynamic/routes.yml`) sólo enruta `PathPrefix("/")`
+hacia `frontend` -- ningún otro servicio, incluido auth, es alcanzable
+desde fuera de la red docker de Freya hoy. Una tenant_api_key sólo sirve,
+por ahora, para llamar a `https://freya-auth:8002/api/v1/auth/token` (y
+luego a cada servicio) desde OTRO CONTENEDOR en esa misma red -- no desde
+un script en una PC cualquiera de internet. Exponer auth (o un endpoint
+`/token` acotado) por Traefik para acceso genuinamente externo queda
+pendiente, fuera del pedido actual.
+
+**Al borrar un tenant**, `delete_tenant` ahora también borra sus filas de
+`tenant_api_keys` (antes de esta ronda no había ninguna que borrar) --
+mismo criterio que `user_tenant_grants`: una key ya emitida para un tenant
+que ya no existe es inútil (sin `tenant_grants` a las que apuntar), pero
+mejor no dejarla viva. El aviso de borrado del panel se actualizó para
+mencionar "sus api keys" explícitamente.
+
+**Descartado:** reusar `service_accounts` (la tabla ya existente para
+cuentas de servicio de la malla) en vez de una tabla nueva. `service` ahí
+es `UNIQUE` -- pensado para un puñado fijo de microservicios de la propia
+plataforma, uno por fila; un tenant necesita poder tener varias keys
+(rotación sin downtime: emitir la nueva, migrar el script, recién ahí
+revocar la vieja) y su propio scoping por `TENANT_GRANTABLE_PERMISSIONS`,
+no por permisos planos de la malla interna.

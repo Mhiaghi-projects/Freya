@@ -47,6 +47,11 @@ class TenantGrantUpdate(BaseModel):
     permissions: list[str] = Field(default_factory=list)
 
 
+class TenantApiKeyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    permissions: list[str] = Field(default_factory=list)
+
+
 @router.get("/roles")
 async def list_roles(client: AuthClient) -> dict:
     return ServiceClient.data(await client.get("/admin/roles"))
@@ -169,3 +174,30 @@ async def update_user_tenant_grant(
         json={"permissions": body.permissions},
     )
     return ServiceClient.data(response)
+
+
+@router.post("/tenants/{tenant_id}/api-keys", status_code=201)
+async def create_tenant_api_key(
+    tenant_id: str, body: TenantApiKeyCreate, client: AuthClient
+) -> dict:
+    """api_secret viaja EN CLARO en esta respuesta -- única vez, el panel
+    lo muestra una sola vez y no lo vuelve a pedir (ver
+    auth/app/domain/tenant_keys.py)."""
+    response = await client.post(
+        f"/admin/tenants/{tenant_id}/api-keys", json=body.model_dump()
+    )
+    return ServiceClient.data(response)
+
+
+@router.get("/tenants/{tenant_id}/api-keys")
+async def list_tenant_api_keys(tenant_id: str, client: AuthClient) -> list:
+    return ServiceClient.data(
+        await client.get(f"/admin/tenants/{tenant_id}/api-keys")
+    )
+
+
+@router.delete("/tenants/{tenant_id}/api-keys/{key_id}", status_code=204)
+async def revoke_tenant_api_key(
+    tenant_id: str, key_id: str, client: AuthClient
+) -> None:
+    await client.delete(f"/admin/tenants/{tenant_id}/api-keys/{key_id}")

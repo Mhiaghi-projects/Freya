@@ -16,6 +16,11 @@ from app.domain.accounts import (
     create_service_account,
     update_service_account_permissions,
 )
+from app.domain.tenant_keys import (
+    create_tenant_api_key,
+    list_tenant_api_keys,
+    revoke_tenant_api_key,
+)
 from app.domain.tenants import (
     TENANT_GRANTABLE_PERMISSIONS,
     create_tenant,
@@ -39,6 +44,7 @@ from app.models.requests import (
     AdminUserCreate,
     ServiceAccountCreate,
     ServiceAccountPermissionsUpdate,
+    TenantApiKeyCreate,
     TenantCreate,
     TenantGrantUpdate,
 )
@@ -164,6 +170,37 @@ async def delete_admin_tenant(
     tenant_id: str, _admin: AdminDep, request: Request
 ) -> None:
     await delete_tenant(request.app.state.gestor_db, tenant_id)
+
+
+@router.post("/admin/tenants/{tenant_id}/api-keys", status_code=201)
+async def create_tenant_key(
+    tenant_id: str, body: TenantApiKeyCreate, admin: AdminDep, request: Request
+) -> dict:
+    """Devuelve api_secret EN CLARO -- única vez, ver
+    app/domain/tenant_keys.py:create_tenant_api_key."""
+    return await create_tenant_api_key(
+        request.app.state.gestor_db,
+        tenant_id=tenant_id,
+        name=body.name,
+        permissions=body.permissions,
+        created_by=admin.get("sub"),
+    )
+
+
+@router.get("/admin/tenants/{tenant_id}/api-keys")
+async def list_tenant_keys(tenant_id: str, _admin: AdminDep, request: Request) -> list:
+    return await list_tenant_api_keys(request.app.state.gestor_db, tenant_id)
+
+
+@router.delete(
+    "/admin/tenants/{tenant_id}/api-keys/{key_id}", status_code=204
+)
+async def revoke_tenant_key(
+    tenant_id: str, key_id: str, _admin: AdminDep, request: Request
+) -> None:
+    await revoke_tenant_api_key(
+        request.app.state.gestor_db, tenant_id=tenant_id, key_id=key_id
+    )
 
 
 @router.get("/admin/users/{user_id}/tenants")

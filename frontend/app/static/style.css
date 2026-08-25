@@ -522,6 +522,37 @@ tr.clickable:hover { background: var(--panel-2); }
   cursor: pointer;
 }
 
+.cell-mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+
+/* Secreto de una api key "como las nubes" (pedido explícito del usuario):
+   se muestra una única vez, al generarla -- el fondo de aviso (--warn) es
+   deliberado, para que no se lea como un dato cualquiera de la tabla. */
+.secret-box {
+  background: var(--panel-2);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 0 0 18px;
+}
+
+.secret-box p { margin: 0 0 8px; font-size: 13px; }
+.secret-box code { font-family: "SFMono-Regular", Consolas, monospace; }
+
+.secret-value {
+  width: 100%;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 0 0 10px;
+  resize: none;
+}
+
+.tenant-keys-panel { padding: 6px 0; }
+
 .inline-form input, .inline-form select {
   background: var(--panel-2);
   border: 1px solid var(--border);

@@ -109,6 +109,24 @@ class TenantGrantUpdate(BaseModel):
     permissions: list[str] = Field(default_factory=list)
 
 
+class TenantApiKeyCreate(BaseModel):
+    """POST /admin/tenants/{tenant_id}/api-keys. role: admin. "Como las
+    nubes" (pedido explícito del usuario): permissions son
+    TENANT_GRANTABLE_PERMISSIONS de ESE tenant, no permisos planos."""
+
+    name: str = Field(min_length=1, max_length=100)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class TenantApiKeyAuthRequest(BaseModel):
+    """POST /api/v1/auth/token (§15.4). Público -- canjea un key_id/
+    api_secret de tenant por un JWT de corta duración, sin login de
+    navegador ni refresh token: se vuelve a llamar aquí cuando expira."""
+
+    key_id: str = Field(min_length=1)
+    api_secret: str = Field(min_length=1)
+
+
 class AdminPasswordReset(BaseModel):
     """POST /admin/users/{user_id}/reset-password. role: admin -- a
     diferencia de /auth/change-password (autoservicio), no exige la

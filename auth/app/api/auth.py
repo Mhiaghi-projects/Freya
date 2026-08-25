@@ -10,8 +10,9 @@ from freya_common import current_tenant, gdb_mutate
 
 from app.deps import UserDep
 from app.domain.refresh import issue_refresh_token, rotate_refresh_token
+from app.domain.tenant_keys import authenticate_tenant_api_key
 from app.domain.tenants import tenant_grants_of
-from app.domain.tokens import issue_user_token
+from app.domain.tokens import issue_tenant_key_token, issue_user_token
 from app.domain.users import (
     authenticate_user,
     change_password,
@@ -26,6 +27,7 @@ from app.models.requests import (
     SignInRequest,
     SignOutRequest,
     SignUpRequest,
+    TenantApiKeyAuthRequest,
     UpdateThemeRequest,
 )
 
@@ -95,6 +97,38 @@ async def sign_in(body: SignInRequest, request: Request) -> dict:
             "tenant_id": tenant,
         },
     }
+
+
+@router.post("/token")
+async def tenant_key_token(body: TenantApiKeyAuthRequest, request: Request) -> dict:
+    """Canjea una tenant_api_key ("como las nubes", ver
+    app/domain/tenant_keys.py) por un JWT de corta duración -- pensado para
+    scripts/CI externos, no para el panel. Sin X-Tenant-Context: el tenant
+    sale de la propia key, no de una cabecera que un llamante externo no
+    tiene por qué mandar. Sin refresh token tampoco: se vuelve a llamar
+    aquí con las mismas credenciales cuando el JWT expira, igual que un
+    client_credentials grant."""
+    settings = request.app.state.settings
+    keyring = request.app.state.keyring
+    gestor_db = request.app.state.gestor_db
+
+    # Mismo limitador que /authenticate/service (token_rate_limiter),
+    # prefijo propio para no compartir cupo con la autenticación de
+    # servicios de la malla.
+    request.app.state.token_rate_limiter.check(f"tenant_key:{body.key_id}")
+
+    principal = await authenticate_tenant_api_key(
+        gestor_db, key_id=body.key_id, api_secret=body.api_secret
+    )
+    access_token, ttl = issue_tenant_key_token(
+        keyring,
+        key_row_id=principal["id"],
+        tenant_id=principal["tenant_id"],
+        permissions=principal["permissions"],
+        issuer=settings.auth_url,
+        ttl_seconds=settings.access_token_service_ttl_seconds,
+    )
+    return {"access_token": access_token, "token_type": "Bearer", "expires_in": ttl}
 
 
 @router.post("/refresh-token")

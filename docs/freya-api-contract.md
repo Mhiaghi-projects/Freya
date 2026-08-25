@@ -8,13 +8,14 @@
 > reflejo exacto de lo que corre hoy (rutas como `/auth/admin/audit-logs`
 > o el header `X-Tenant-ID` son el diseño original, no lo desplegado —
 > para la superficie realmente en producción, la fuente de verdad es el
-> código de cada servicio, `app/api/*.py`, no este documento). La §3.9 y
-> la §16.1 son la excepción: se
-> reescribieron para documentar el modelo de tenants y accesos por
-> proyecto tal como quedó implementado (2026-08-24), con sus rutas y
-> nombres de cabecera reales (`X-Tenant-Context`, no `X-Tenant-ID`),
-> incluyendo el acceso a gestor-db "como un RDS" del propio proyecto
-> (grant `database`, ver §3.9).
+> código de cada servicio, `app/api/*.py`, no este documento). La §3.9
+> (con §3.9.1), la §15.4 y la §16.1 son la excepción: se
+> reescribieron/agregaron para documentar el modelo de tenants y accesos
+> por proyecto tal como quedó implementado (2026-08-24 y 2026-08-25), con
+> sus rutas y nombres de cabecera reales (`X-Tenant-Context`, no
+> `X-Tenant-ID`), incluyendo el acceso a gestor-db "como un RDS" del
+> propio proyecto (grant `database`, §3.9) y las api keys de tenant
+> "como las nubes" (§3.9.1, §15.4).
 
 ---
 
@@ -602,10 +603,39 @@ concede por separado, servicio por servicio, vía `user_tenant_grants`
 |--------|------|-------------|
 | GET | `/api/admin/tenants` | Lista todos los tenants registrados |
 | POST | `/api/admin/tenants` | Crea el tenant y aprovisiona su schema + bucket en storage, git, cicd, project-manager **y gestor-db** (fan-out, ver `frontend/app/api/admin.py`) — el aprovisionamiento de gestor-db es explícito e idempotente (`POST /admin/tenants/{id}/provision`, `CREATE SCHEMA IF NOT EXISTS`), no depende de que los otros cuatro lo creen como efecto colateral de sus propias migraciones |
-| DELETE | `/api/admin/tenants/{tenant_id}` | Borra el tenant entero: **todos** sus schemas en gestor-db (`DROP SCHEMA ... CASCADE` sobre el principal, que storage/git/cicd/project-manager comparten, más cualquier `{tenant_id}_*` que el propio tenant se haya creado vía gestor-db "como un RDS", ver `gestor-db/app/api/admin.py:delete_all_schemas`) + directorio físico de blobs (buckets propios y los internos `git`/`artifacts`/`logs` que usan git/cicd por debajo) + filas de `user_tenant_grants`. **Irreversible.** Rechaza `tenant_id = "freya"` con `400` — el tenant de control-plane nunca se borra |
+| DELETE | `/api/admin/tenants/{tenant_id}` | Borra el tenant entero: **todos** sus schemas en gestor-db (`DROP SCHEMA ... CASCADE` sobre el principal, que storage/git/cicd/project-manager comparten, más cualquier `{tenant_id}_*` que el propio tenant se haya creado vía gestor-db "como un RDS", ver `gestor-db/app/api/admin.py:delete_all_schemas`) + directorio físico de blobs (buckets propios y los internos `git`/`artifacts`/`logs` que usan git/cicd por debajo) + filas de `user_tenant_grants` **y `tenant_api_keys`** (§3.9.1). **Irreversible.** Rechaza `tenant_id = "freya"` con `400` — el tenant de control-plane nunca se borra |
 | GET | `/api/admin/tenant-grants` | Servicios concedibles por tenant y sus permisos (`{"storage": ["read:storage","write:storage"], ...}`) |
 | GET | `/api/admin/users/{user_id}/tenants` | Grants actuales del usuario, por tenant |
 | PUT | `/api/admin/users/{user_id}/tenants/{tenant_id}` | Reemplaza los permisos del usuario para ese tenant (`body: {"permissions": ["read:storage","write:storage"]}`) — lista vacía retira el acceso |
+
+#### 3.9.1 Api keys de tenant ("como las nubes")
+
+Pedido explícito del usuario: un par `key_id`/`api_secret` por proyecto
+para que un script, CI externo u otro backend llame a Freya sin login de
+navegador — mismo patrón que ya usan las cuentas de servicio de la propia
+malla (`auth/app/domain/accounts.py`), pero scoped a
+`TENANT_GRANTABLE_PERMISSIONS` de un único tenant, nunca a un permiso
+plano de la malla interna.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/admin/tenants/{tenant_id}/api-keys` | Genera una key (`body: {"name": "...", "permissions": ["read:git", ...]}`). Devuelve `api_secret` **en claro, una única vez** — ni el panel ni la API lo vuelven a mostrar después, sólo se guarda su hash (Argon2id) |
+| GET | `/api/admin/tenants/{tenant_id}/api-keys` | Lista las keys del tenant (sin el secreto) |
+| DELETE | `/api/admin/tenants/{tenant_id}/api-keys/{key_id}` | Revoca una key. Irreversible — cualquier script que la use deja de poder autenticarse |
+
+El JWT que se obtiene al canjear una key (§15.4) es, a propósito,
+estructuralmente idéntico al de un usuario: mismo `tenant_grants:
+{tenant: permissions}` que storage/git/cicd/project-manager/gestor-db ya
+saben leer — cero cambios en esos servicios. `permissions` plano queda
+siempre vacío y `role: "tenant_key"`.
+
+**Limitación real de hoy:** Traefik sólo enruta tráfico externo hacia
+`frontend` (`services/traefik/dynamic/routes.yml`, `PathPrefix("/")`) —
+ningún otro servicio, incluido auth, es alcanzable desde fuera de la red
+docker de Freya. Una tenant_api_key sirve, por ahora, para llamadas
+service-to-service **dentro** de esa red (otro contenedor que se una a
+ella), no desde un script en una máquina cualquiera de internet. Exponer
+auth por Traefik para acceso genuinamente externo queda pendiente.
 
 **Creación de tenant — Response `201`**
 ```json
@@ -2840,6 +2870,40 @@ Expiración: 5 minutos. Cada servicio cachea su JWT y lo renueva a los 4m30s.
   }
 }
 ```
+
+### 15.4 `POST /api/v1/auth/token` (real, no aspiracional)
+
+A diferencia del resto de §15, éste es un endpoint **público** de `auth`
+(no expuesto por el gateway de frontend, pero sí alcanzable directamente
+por cualquiera que resuelva `freya-auth:8002` — ver §3.9.1 y la limitación
+de Traefik ahí anotada). Canjea una tenant_api_key ("como las nubes",
+pedido explícito del usuario) por un JWT de corta duración, sin sesión de
+navegador.
+
+**Request**
+```json
+{ "key_id": "FRAK7X3QQ9K2M8P1RSTZ", "api_secret": "..." }
+```
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "data": {
+    "access_token": "eyJhbGciOiJSUzI1NiIs...",
+    "token_type": "Bearer",
+    "expires_in": 300
+  }
+}
+```
+
+Sin refresh token: se vuelve a llamar aquí con las mismas credenciales
+cuando el JWT expira (`access_token_service_ttl_seconds`), igual que un
+`client_credentials` grant. El JWT resultante trae `role: "tenant_key"`,
+`permissions: []` y `tenant_grants: {tenant_id: [...]}` con exactamente
+los permisos elegidos al generar la key — misma forma que un JWT de
+usuario, así que storage/git/cicd/project-manager/gestor-db lo aceptan sin
+ningún cambio (§16.1).
 
 ---
 

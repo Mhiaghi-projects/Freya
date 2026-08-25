@@ -11,8 +11,8 @@ from freya_common import FreyaError
 from app.domain.tenants import (
     CONTROL_PLANE_TENANT,
     TENANT_GRANTABLE_PERMISSIONS,
-    _validate_tenant_permissions,
     delete_tenant,
+    validate_tenant_permissions,
 )
 
 
@@ -23,31 +23,31 @@ def test_los_seis_servicios_combinables_son_concedibles_por_proyecto() -> None:
 
 
 def test_validate_tenant_permissions_acepta_storage() -> None:
-    _validate_tenant_permissions(["read:storage", "write:storage"])
+    validate_tenant_permissions(["read:storage", "write:storage"])
 
 
 def test_validate_tenant_permissions_acepta_monitoring() -> None:
-    _validate_tenant_permissions(["read:monitoring"])
+    validate_tenant_permissions(["read:monitoring"])
 
 
 def test_validate_tenant_permissions_acepta_git_cicd_project_manager() -> None:
-    _validate_tenant_permissions(["read:git", "write:cicd", "read:project-manager"])
+    validate_tenant_permissions(["read:git", "write:cicd", "read:project-manager"])
 
 
 def test_validate_tenant_permissions_acepta_database() -> None:
-    _validate_tenant_permissions(["read:database", "write:database"])
+    validate_tenant_permissions(["read:database", "write:database"])
 
 
 def test_validate_tenant_permissions_rechaza_lo_no_concedible() -> None:
     # admin:git nunca es un grant que se conceda por proyecto -- es cosa
     # de administración de verdad.
     with pytest.raises(FreyaError) as exc_info:
-        _validate_tenant_permissions(["admin:git"])
+        validate_tenant_permissions(["admin:git"])
     assert exc_info.value.status_code == 400
 
 
 def test_validate_tenant_permissions_acepta_lista_vacia() -> None:
-    _validate_tenant_permissions([])
+    validate_tenant_permissions([])
 
 
 async def test_delete_tenant_nunca_borra_freya() -> None:

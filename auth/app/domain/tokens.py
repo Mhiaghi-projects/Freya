@@ -63,6 +63,37 @@ def issue_service_token(
     )
 
 
+def issue_tenant_key_token(
+    keyring: KeyRing,
+    *,
+    key_row_id: str,
+    tenant_id: str,
+    permissions: list[str],
+    issuer: str,
+    ttl_seconds: int,
+) -> tuple[str, int]:
+    """JWT de una tenant_api_key ("como las nubes", ver
+    app.domain.tenant_keys) -- estructuralmente igual a un JWT de usuario
+    (mismo `tenant_grants` que storage/git/cicd/project-manager/gestor-db
+    ya saben leer, sin ningún cambio en esos servicios), pero sub es la
+    propia key (no hay persona detrás, no hay refresh token: se vuelve a
+    pedir con key_id/api_secret cuando expira) y `permissions` plano queda
+    siempre vacío -- todo lo que puede hacer viene acotado por
+    tenant_grants de un único tenant, nunca un permiso global de la malla."""
+    return _issue(
+        keyring,
+        subject=key_row_id,
+        issuer=issuer,
+        ttl_seconds=ttl_seconds,
+        extra_claims={
+            "tenant_id": tenant_id,
+            "role": "tenant_key",
+            "permissions": [],
+            "tenant_grants": {tenant_id: permissions},
+        },
+    )
+
+
 def issue_user_token(
     keyring: KeyRing,
     *,

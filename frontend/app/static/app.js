@@ -1107,6 +1107,9 @@ route("admin-tenants", async (content) => {
   content.appendChild(el("p", { class: "muted" },
     "Crear un tenant sólo aísla sus datos (storage). Para que alguien lo use, dale acceso desde Usuarios."));
 
+  const grantDefs = await api("GET", "/api/admin/tenant-grants");
+  const grantServices = Object.keys(grantDefs);
+
   const idInput = el("input", { type: "text", placeholder: "id (minúsculas, ej. athenea)", id: "nt-id", required: "true", pattern: "^[a-z][a-z0-9_-]*$" });
   const nameInput = el("input", { type: "text", placeholder: "nombre", id: "nt-name", required: "true" });
   const form = el("form", { class: "inline-form" }, idInput, nameInput,
@@ -1127,12 +1130,12 @@ route("admin-tenants", async (content) => {
   async function deleteTenant(t) {
     tenantsError.classList.add("hidden");
     // Aviso de antemano, con el peso que corresponde a un borrado que se
-    // lleva TODO (storage, git, cicd, project-manager y la base de datos
-    // propia de ese proyecto) sin vuelta atrás -- pedido explícito del
-    // usuario. Escribir el id a mano es más difícil de disparar sin querer
-    // que un simple confirm().
+    // lleva TODO (storage, git, cicd, project-manager, la base de datos
+    // propia de ese proyecto y sus api keys) sin vuelta atrás -- pedido
+    // explícito del usuario. Escribir el id a mano es más difícil de
+    // disparar sin querer que un simple confirm().
     const typed = prompt(
-      `Esto borra el tenant '${t.id}' (${t.name}) y TODO lo que tiene: storage, repositorios git, pipelines de CI/CD, proyectos y su base de datos propia (gestor-db). No se puede deshacer.\n\nEscribe "${t.id}" para confirmar:`
+      `Esto borra el tenant '${t.id}' (${t.name}) y TODO lo que tiene: storage, repositorios git, pipelines de CI/CD, proyectos, su base de datos propia (gestor-db) y sus api keys. No se puede deshacer.\n\nEscribe "${t.id}" para confirmar:`
     );
     if (typed !== t.id) return;
     try {
@@ -1144,14 +1147,116 @@ route("admin-tenants", async (content) => {
     }
   }
 
+  // Api keys "como las nubes" (pedido explícito del usuario): un par
+  // key_id/api_secret por tenant para que scripts/CI externo llamen a
+  // Freya sin login de navegador. El secreto sólo se muestra una vez, al
+  // generarlo -- ni el panel ni la API lo vuelven a pedir después.
+  async function showTenantKeys(t) {
+    const tr = tableBody.querySelector(`tr[data-tenant-id="${t.id}"]`);
+    if (!tr) return;
+    const keysError = el("p", { class: "error hidden" });
+    const keysBody = el("tbody", {});
+    const keysTable = el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", {}, "Nombre"), el("th", {}, "Key ID"), el("th", {}, "Servicios"),
+        el("th", {}, "Creada"), el("th", {}, ""))),
+      keysBody,
+    );
+
+    async function renderKeys() {
+      const keys = await api("GET", `/api/admin/tenants/${encodeURIComponent(t.id)}/api-keys`);
+      keysBody.innerHTML = "";
+      for (const k of keys) {
+        keysBody.appendChild(el("tr", {},
+          el("td", {}, k.name), el("td", { class: "cell-mono" }, k.key_id),
+          el("td", {}, k.permissions.join(", ") || "—"), el("td", {}, k.created_at || ""),
+          el("td", {}, el("button", {
+            class: "btn btn-secondary", type: "button",
+            onclick: () => revokeKey(k),
+          }, "Revocar"))));
+      }
+      if (!keys.length) {
+        keysBody.appendChild(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "Sin api keys todavía.")));
+      }
+    }
+
+    async function revokeKey(k) {
+      if (!confirm(`¿Revocar la key "${k.name}" (${k.key_id})? Cualquier script que la use dejará de poder autenticarse.`)) return;
+      try {
+        await api("DELETE", `/api/admin/tenants/${encodeURIComponent(t.id)}/api-keys/${encodeURIComponent(k.key_id)}`);
+        await renderKeys();
+      } catch (err) {
+        keysError.textContent = err.message;
+        keysError.classList.remove("hidden");
+      }
+    }
+
+    const nameInput = el("input", { type: "text", placeholder: "nombre (ej. CI de heracles)", required: "true" });
+    const checks = el("div", { class: "grant-checks" }, grantServices.map((s) =>
+      el("label", { class: "grant-check" },
+        el("input", { type: "checkbox", value: s }), ` ${s}`,
+      )
+    ));
+    const genBtn = el("button", { class: "btn", type: "button" }, "Generar key");
+    const closeBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Cerrar");
+    closeBtn.addEventListener("click", () => { renderTenants(); });
+
+    genBtn.addEventListener("click", async () => {
+      keysError.classList.add("hidden");
+      const name = nameInput.value.trim();
+      if (!name) { keysError.textContent = "Ponele un nombre a la key."; keysError.classList.remove("hidden"); return; }
+      const permissions = grantServices
+        .filter((s, i) => checks.children[i].querySelector("input").checked)
+        .flatMap((s) => grantDefs[s]);
+      try {
+        const created = await api("POST", `/api/admin/tenants/${encodeURIComponent(t.id)}/api-keys`, { name, permissions });
+        nameInput.value = "";
+        for (const label of checks.children) label.querySelector("input").checked = false;
+        await renderKeys();
+        showSecretOnce(created);
+      } catch (err) {
+        keysError.textContent = err.message;
+        keysError.classList.remove("hidden");
+      }
+    });
+
+    function showSecretOnce(created) {
+      const box = el("div", { class: "secret-box" },
+        el("p", {}, el("strong", {}, "Copiá el secreto ahora: no se vuelve a mostrar.")),
+        el("p", { class: "muted" }, `Key ID (público, va en cada llamada): `, el("code", {}, created.key_id)),
+        el("textarea", { class: "secret-value", readonly: "true", rows: "2" }, created.api_secret),
+        el("p", { class: "muted" },
+          `Desde cualquier contenedor de la red de Freya: POST https://freya-auth:8002/api/v1/auth/token con {"key_id": "${created.key_id}", "api_secret": "..."} devuelve un JWT de corta duración -- se vuelve a pedir cuando expira, no hace falta guardar el JWT.`),
+        el("button", { class: "btn", type: "button", onclick: () => box.remove() }, "Ya lo copié"),
+      );
+      tr.querySelector(".tenant-keys-panel").prepend(box);
+    }
+
+    tr.innerHTML = "";
+    tr.appendChild(el("td", { colspan: "4" },
+      el("div", { class: "tenant-keys-panel" },
+        el("p", { class: "muted" }, `Api keys de ${t.name} (${t.id}):`),
+        keysTable, keysError,
+        el("p", { class: "muted" }, "Generar una nueva:"),
+        el("div", { class: "inline-form" }, nameInput, genBtn, closeBtn),
+        checks,
+      )));
+    await renderKeys();
+  }
+
   async function renderTenants() {
     const tenants = await api("GET", "/api/admin/tenants");
     tableBody.innerHTML = "";
     for (const t of tenants) {
-      tableBody.appendChild(el("tr", {}, el("td", {}, t.id), el("td", {}, t.name), el("td", {}, t.created_at || ""),
-        el("td", {}, t.id === "freya" ? "" : el("button", {
-          class: "btn btn-danger", type: "button", onclick: () => deleteTenant(t),
-        }, "Eliminar"))));
+      tableBody.appendChild(el("tr", { "data-tenant-id": t.id },
+        el("td", {}, t.id), el("td", {}, t.name), el("td", {}, t.created_at || ""),
+        el("td", {}, [
+          el("button", { class: "btn btn-secondary", type: "button", onclick: () => showTenantKeys(t) }, "Api keys"),
+          t.id === "freya" ? null : " ",
+          t.id === "freya" ? null : el("button", {
+            class: "btn btn-danger", type: "button", onclick: () => deleteTenant(t),
+          }, "Eliminar"),
+        ])));
     }
   }
 

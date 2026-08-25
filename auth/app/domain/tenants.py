@@ -45,7 +45,7 @@ TENANT_GRANTABLE_PERMISSIONS: dict[str, list[str]] = {
 _GRANTABLE = {p for perms in TENANT_GRANTABLE_PERMISSIONS.values() for p in perms}
 
 
-def _validate_tenant_permissions(permissions: list[str]) -> None:
+def validate_tenant_permissions(permissions: list[str]) -> None:
     unknown = [p for p in permissions if p not in _GRANTABLE]
     if unknown:
         raise BadRequest(
@@ -107,6 +107,17 @@ async def delete_tenant(client: ServiceClient, tenant_id: str) -> None:
         action="delete",
         where={"tenant_id": tenant_id},
     )
+    # tenant_api_keys ("como las nubes", ver app/domain/tenant_keys.py):
+    # sin esto, un key_id/api_secret ya emitido seguiría canjeándose por un
+    # JWT válido después de borrar el tenant entero -- inútil (sin
+    # tenant_grants a las que apuntar), pero mejor no dejarlo vivo.
+    await gdb_mutate(
+        client,
+        CONTROL_PLANE_TENANT,
+        table="tenant_api_keys",
+        action="delete",
+        where={"tenant_id": tenant_id},
+    )
     await gdb_mutate(
         client,
         CONTROL_PLANE_TENANT,
@@ -158,7 +169,7 @@ async def set_tenant_grant(
     equivale a quitar el acceso a ese proyecto -- borra la fila en vez de
     dejar un permissions=[] huérfano, así "tener el tenant asignado" sigue
     siendo exactamente "tener una fila aquí"."""
-    _validate_tenant_permissions(permissions)
+    validate_tenant_permissions(permissions)
     await get_tenant(client, tenant_id)
     if not permissions:
         await gdb_mutate(

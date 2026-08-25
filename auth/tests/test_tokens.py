@@ -12,7 +12,12 @@ from jwt import PyJWK
 from jwt.exceptions import PyJWTError
 
 from app.domain.keys import KeyRing
-from app.domain.tokens import SERVICE_SUBJECT, issue_service_token, issue_user_token
+from app.domain.tokens import (
+    SERVICE_SUBJECT,
+    issue_service_token,
+    issue_tenant_key_token,
+    issue_user_token,
+)
 
 
 def _keyring() -> KeyRing:
@@ -70,6 +75,32 @@ def test_user_token_lleva_sub_role_y_permissions() -> None:
     assert claims["sub"] == "usr_ABC123"
     assert claims["tenant_id"] == "freya"
     assert claims["role"] == "admin"
+
+
+def test_tenant_key_token_lleva_tenant_grants_sin_permissions_planos() -> None:
+    # "Como las nubes" (pedido explícito del usuario): una tenant_api_key
+    # nunca trae un permiso plano de la malla -- todo viene acotado por
+    # tenant_grants de su único tenant, mismo criterio que ya usan
+    # storage/git/cicd/project-manager/gestor-db para un JWT de usuario.
+    keyring = _keyring()
+    token, ttl = issue_tenant_key_token(
+        keyring,
+        key_row_id="tak_ABC123",
+        tenant_id="heracles",
+        permissions=["read:database", "write:database"],
+        issuer="https://freya-auth:8002",
+        ttl_seconds=300,
+    )
+    assert ttl == 300
+    claims = _decode(
+        token, keyring.jwks(), audience=INTERNAL_AUDIENCE, issuer="https://freya-auth:8002"
+    )
+    assert claims["sub"] == "tak_ABC123"
+    assert claims["role"] == "tenant_key"
+    assert claims["permissions"] == []
+    assert claims["tenant_grants"] == {
+        "heracles": ["read:database", "write:database"]
+    }
 
 
 def test_token_de_una_clave_no_verifica_con_otra() -> None:
