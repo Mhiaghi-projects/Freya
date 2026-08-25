@@ -1,0 +1,64 @@
+# Ver deploy-storage.yml para la explicación completa de la plantilla --
+# faltaba este workflow (junto con deploy-git.yml, deploy-cicd.yml):
+# encontrado al empujar el cambio de multi-tenant que toca estos tres
+# servicios por primera vez desde que se hizo el reparto de workflows por
+# servicio.
+
+name: Deploy project-manager
+
+on:
+  push:
+    branches: [main]
+    paths: ["project-manager/**"]
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construir imagen de test
+        run: |
+          docker build --quiet --target dev \
+            --tag freya/project-manager:test \
+            --file project-manager/Dockerfile .
+
+      - name: Lint
+        run: docker run --rm --network none freya/project-manager:test ruff check /srv/app
+
+      - name: Test
+        run: docker run --rm --network none freya/project-manager:test pytest -v /srv/tests
+
+      - name: Security scan (dependencias Python)
+        run: docker run --rm --env HOME=/tmp freya/project-manager:test pip-audit
+
+      - name: Construir imagen runtime
+        run: |
+          docker build --quiet --target runtime \
+            --tag freya/project-manager:runtime-scan \
+            --file project-manager/Dockerfile .
+
+      - name: Security scan (imagen runtime completa, incluido el SO base)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: freya/project-manager:runtime-scan
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  deploy:
+    needs: check
+    runs-on: [self-hosted, freya]
+    defaults:
+      run:
+        working-directory: /workspace
+
+    steps:
+      - name: Actualizar el checkout local
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Desplegar
+        run: bash services/github-runner/deploy-service.sh project-manager
