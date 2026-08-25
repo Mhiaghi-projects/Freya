@@ -16,9 +16,9 @@ from app.domain.tenants import (
 )
 
 
-def test_los_cinco_servicios_combinables_son_concedibles_por_proyecto() -> None:
+def test_los_seis_servicios_combinables_son_concedibles_por_proyecto() -> None:
     assert set(TENANT_GRANTABLE_PERMISSIONS) == {
-        "storage", "monitoring", "git", "cicd", "project-manager",
+        "storage", "monitoring", "git", "cicd", "project-manager", "database",
     }
 
 
@@ -32,6 +32,10 @@ def test_validate_tenant_permissions_acepta_monitoring() -> None:
 
 def test_validate_tenant_permissions_acepta_git_cicd_project_manager() -> None:
     _validate_tenant_permissions(["read:git", "write:cicd", "read:project-manager"])
+
+
+def test_validate_tenant_permissions_acepta_database() -> None:
+    _validate_tenant_permissions(["read:database", "write:database"])
 
 
 def test_validate_tenant_permissions_rechaza_lo_no_concedible() -> None:

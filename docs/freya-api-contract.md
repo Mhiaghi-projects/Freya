@@ -4,6 +4,18 @@
 **Base URL:** `https://freya.local/api/v1`
 **Entry point:** todo el tráfico externo entra por `traefik` → `frontend`. Ningún servicio interno se expone directamente.
 
+> **Nota sobre este documento:** es el contrato *objetivo*, no siempre el
+> reflejo exacto de lo que corre hoy (rutas como `/auth/admin/audit-logs`
+> o el header `X-Tenant-ID` son el diseño original, no lo desplegado —
+> para la superficie realmente en producción, la fuente de verdad es el
+> código de cada servicio, `app/api/*.py`, no este documento). La §3.9 y
+> la §16.1 son la excepción: se
+> reescribieron para documentar el modelo de tenants y accesos por
+> proyecto tal como quedó implementado (2026-08-24), con sus rutas y
+> nombres de cabecera reales (`X-Tenant-Context`, no `X-Tenant-ID`),
+> incluyendo el acceso a gestor-db "como un RDS" del propio proyecto
+> (grant `database`, ver §3.9).
+
 ---
 
 ## 1. Convenciones Globales
@@ -570,6 +582,55 @@ Response `200` — objeto usuario completo (shape de 3.2 + `metadata`, `permissi
   "meta": { "pagination": { "total": 1204, "limit": 50, "offset": 0 } }
 }
 ```
+
+---
+
+### 3.9 Gestión de Tenants y Accesos por Proyecto (real, no aspiracional)
+
+Esta subsección documenta lo que corre hoy, no el diseño original de §3.1–3.8
+(ver nota al inicio del documento). Rutas reales, todas detrás de
+`https://freya.local/api/admin/...` (frontend), `Bearer` con `role: admin`.
+
+**Modelo:** un tenant es sólo aislamiento de datos (un schema en Postgres +
+un bucket `project` en storage). El acceso de un usuario a un tenant es
+independiente del tenant donde vive su propia cuenta (siempre `freya`) — se
+concede por separado, servicio por servicio, vía `user_tenant_grants`
+(`auth/app/domain/tenants.py: TENANT_GRANTABLE_PERMISSIONS`):
+`storage`, `monitoring`, `git`, `cicd`, `project-manager`, `database`.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/admin/tenants` | Lista todos los tenants registrados |
+| POST | `/api/admin/tenants` | Crea el tenant y aprovisiona su schema + bucket en storage, git, cicd y project-manager (fan-out, ver `frontend/app/api/admin.py`) |
+| DELETE | `/api/admin/tenants/{tenant_id}` | Borra el tenant entero: `DROP SCHEMA ... CASCADE` (storage, git, cicd, project-manager comparten schema-por-tenant) + directorio físico de blobs + filas de `user_tenant_grants`. **Irreversible.** Rechaza `tenant_id = "freya"` con `400` — el tenant de control-plane nunca se borra |
+| GET | `/api/admin/tenant-grants` | Servicios concedibles por tenant y sus permisos (`{"storage": ["read:storage","write:storage"], ...}`) |
+| GET | `/api/admin/users/{user_id}/tenants` | Grants actuales del usuario, por tenant |
+| PUT | `/api/admin/users/{user_id}/tenants/{tenant_id}` | Reemplaza los permisos del usuario para ese tenant (`body: {"permissions": ["read:storage","write:storage"]}`) — lista vacía retira el acceso |
+
+**Creación de tenant — Response `201`**
+```json
+{
+  "success": true,
+  "data": { "id": "athenea", "name": "Athenea", "created_at": 1745539200 }
+}
+```
+
+**Cómo se consume desde cada servicio:** el navegador nunca elige el
+tenant activo por sí solo. El usuario primero ve el *picker* de tenants a
+los que tiene grant para ese servicio (Panel, Git, Drive, CI/CD,
+Proyectos); al elegir uno, el frontend agrega `?project={tenant_id}` a
+cada llamada siguiente, y la traduce en la cabecera `X-Tenant-Context`
+hacia el backend correspondiente (nunca `X-Tenant-ID`, pese a lo que diga
+§1.1 — ver §16.1). Una cuenta `admin` conserva el comportamiento sin
+picker (ve todo lo que existe) salvo en storage y monitoring, donde queda
+restringida a su propio tenant (`freya`) salvo que también reciba un grant
+explícito — pedido deliberado del usuario ("admin sólo tiene vista global
+de Freya"); en git/cicd/project-manager/database, el permiso plano del rol
+admin sigue alcanzando para cualquier tenant, igual que en el diseño
+original.
+
+**Errores:** `403` si el `tenant_id` es `"freya"` en un `DELETE`; `404` si
+el tenant no existe; `409` si ya existe uno con ese `id` en el `POST`.
 
 ---
 
@@ -2784,8 +2845,33 @@ Expiración: 5 minutos. Cada servicio cachea su JWT y lo renueva a los 4m30s.
 
 ## 16. Reglas Transversales
 
-### 16.1 Aislamiento de tenant
-Toda consulta a datos incluye `tenant_id` derivado del token, **nunca** del body del request. Un `tenant_id` en el body que no coincida con el del token → `403 TENANT_MISMATCH`.
+### 16.1 Aislamiento de tenant (real, no aspiracional)
+
+A diferencia del diseño original de esta sección, el tenant activo de una
+petición **no** se deriva sólo del token: viaja en la cabecera
+`X-Tenant-Context` (nunca `X-Tenant-ID`, pese a §1.1), que el frontend
+fija a partir del `?project=` elegido en el picker (§3.9). El token nunca
+lleva un tenant fijo — un usuario puede tener grants en varios a la vez.
+
+Cada backend (storage/git/cicd/project-manager/gestor-db) valida esa
+cabecera contra el propio token en cada request, nunca confía en la
+cabecera sola:
+
+- **Llamada de servicio a servicio** (`X-Service-Name` presente y
+  coincide con el `service` firmado en el JWT): confianza total para
+  cualquier tenant que declare — así se comportó siempre la malla interna.
+- **Llamada de un usuario final** (JWT sin `service`): exige que el
+  permiso pedido esté en el flat `permissions` del token (rol admin,
+  salvo storage/monitoring que restringen admin a `freya`) **o** en
+  `tenant_grants[tenant]` del propio JWT (`require_service_access` /
+  `require_db_access`, `freya-common/auth_client.py` y
+  `gestor-db/app/deps.py`). Si no hay ninguno de los dos → `403 Forbidden`,
+  no `404` — se prefirió no ocultar la existencia del tenant sobre el
+  riesgo de acostumbrar al cliente a distinguir "no existe" de "no tienes
+  acceso" por el código de estado.
+
+Body nunca lleva `tenant_id`: nunca formó parte del contrato real, ni en
+el diseño original ni en el actual.
 
 ### 16.2 Idempotencia
 POST que crean recursos aceptan `Idempotency-Key`. La respuesta se cachea 24h; un reintento con la misma key devuelve la respuesta original sin re-ejecutar.

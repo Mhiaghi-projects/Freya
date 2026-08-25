@@ -886,3 +886,95 @@ Como demostración real (no descartable, pedido explícito): se creó el
 tenant "athenea" de verdad (permanente, sin servicio propio) y se le dio
 acceso a la cuenta real de Mhiaghi: storage en "freya", storage y
 monitoring en "athenea".
+
+---
+
+## 2026-08-24 — Gamification: recompensa a todo el equipo del proyecto, no sólo a quien completa la task
+
+Pedido explícito del usuario: "Todas las tareas del backlog cuando
+lleguen a done... le dará xp y monedas a todos los usuarios de ese
+proyecto." Antes (task_sync.py), sólo `completed_by` recibía el premio,
+con `gam_xp_events(source, source_ref)` como clave de deduplicación (una
+fila por task). Ahora la clave pasa a `(source, source_ref, user_id)` --
+cada miembro de `project.team_members` recibe su propio evento por la
+misma task, sin bloquear a los demás. `completed_by` no tiene trato
+especial: si es del equipo (lo normal), cobra igual que el resto por estar
+en `team_members`, no por haber movido la tarjeta.
+
+**Descartado:** premiar sólo a `completed_by` y dar un "bonus de equipo"
+menor al resto -- el usuario pidió el mismo premio para todos, sin
+diferenciar quién completó la task.
+
+Además, pedido en la misma instrucción: una task en "done" queda cerrada
+-- ya no se puede mover a ningún otro estado. Antes (tasks.py:update_task)
+reabrir una "done" era una operación soportada a propósito (arrastrarla de
+vuelta a "in_progress" limpiaba `completed_at`/`completed_by` obsoletos).
+Se quita esa rama entera: el intento de moverla ahora es un 409 antes de
+llegar a validar columnas o dependencias.
+
+## 2026-08-24 — Leaderboard semanal, aparte del progreso de toda la vida
+
+Pedido explícito del usuario: "Gamification tiene que resetear el nivel
+cada semana y ponerlo en el leaderboard." `total_xp`/`level` (progreso de
+logros y racha) no se tocan -- son de toda la vida, resetearlos rompería
+achievements.check_and_unlock (piensa en task_count/level acumulados) y el
+sistema de rachas. En vez de eso, `weekly_xp`/`weekly_coins` son columnas
+nuevas, que `award_xp` incrementa en paralelo a las de siempre; el
+leaderboard (`GET /leaderboard`, `period=weekly` por defecto) ordena por
+`weekly_xp`, no por `total_xp`.
+
+Un `WeeklyResetter` (mismo patrón de poll que `TaskSyncer`, cada hora)
+revisa si ya cambió la semana ISO (lunes) desde el último reset
+(`gam_weekly_reset_state`, fila única); si cambió, guarda una foto del
+ranking que termina en `gam_weekly_leaderboard_snapshots` (si no, "quién
+ganó esta semana" se perdería en el instante mismo del reset) y pone
+`weekly_xp`/`weekly_coins` en 0 para todos. gestor-db rechaza un
+update/delete sin `where` -- el reset usa `{"weekly_xp": {"gte": 0}}`
+(siempre cierto, nunca vacío) para poder tocar todas las filas.
+
+**Descartado:** resetear `total_xp`/`level` directamente cada semana --
+destruiría el progreso de logros/streak, que están pensados como
+acumulados de toda la vida, no semanales.
+
+---
+
+## 2026-08-24 — gestor-db "como un RDS": acceso directo de un proyecto a su propio schema
+
+Pedido explícito del usuario: "gestor-db también debería servir para que
+otros proyectos usen servicio de DB como si fuera un RDS." Hasta ahora
+`gestor-db/app/deps.py::caller_context` sólo aceptaba JWT de servicio
+(`X-Service-Name` firmado) -- ningún JWT de usuario final podía llamarlo,
+a diferencia de storage/git/cicd/project-manager. Se añadió `database` a
+`TENANT_GRANTABLE_PERMISSIONS` (auth) y `Caller.is_service`/
+`require_db_access` (gestor-db): un servicio sigue con confianza total
+para cualquier tenant que declare (como siempre); un usuario final ahora
+puede llamar `/query`, `/mutate`, `/tables` y `/schemas` (list+create) de
+SU propio tenant si tiene el grant `database`, igual criterio que
+storage/git/cicd/project-manager (`require_service_access`). El frontend
+expone esto en `app/api/database.py`, siguiendo el mismo patrón
+`_tenant(project)` que git/cicd/projects.
+
+**Descartado:** que frontend usara su propio token de servicio para
+llamar gestor-db en nombre del usuario. Rota el principio ya documentado
+en `frontend/app/infra/gateway.py` ("frontend nunca eleva privilegio,
+siempre reenvía el JWT propio del usuario que llama") -- se prefirió
+extender la frontera de confianza de gestor-db en vez de saltársela desde
+afuera.
+
+**Hallazgo de seguridad durante el cambio:** al escribir `caller_context`
+para aceptar JWT de usuario, se encontró que `DELETE /schemas/{schema}`
+(el endpoint que borra un schema entero con `DROP SCHEMA ... CASCADE`,
+escrito en una ronda anterior de esta misma sesión) nunca tuvo NINGÚN
+chequeo de permiso -- antes sólo lo alcanzaba un token de servicio (ya de
+confianza total), pero con usuarios finales aceptados también habría
+dejado a cualquier cuenta sin ningún grant borrar el schema completo de
+su propio tenant. Se corrigió exigiendo el flat `write:database`
+(`require_permissions`, deliberadamente NO `require_db_access`): sólo
+admin o un servicio pueden invocarlo -- un grant `database` por tenant no
+alcanza para esto. Borrar un tenant entero sigue siendo sólo cosa del
+flujo orquestado de `auth/app/domain/tenants.py:delete_tenant`.
+
+`gestor-db/app/api/migrations.py` (DDL crudo) se dejó deliberadamente sin
+tocar y sin exponer en el gateway de frontend -- demasiado peligroso para
+un grant por tenant; sólo servicios (que ya corren sus propias migraciones
+al aprovisionar un tenant) lo usan.

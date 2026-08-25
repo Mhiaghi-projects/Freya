@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from freya_common import Conflict, require_permissions
 
-from app.deps import CallerDep, ClaimsDep
+from app.deps import CallerDep, ClaimsDep, require_db_access
 from app.domain.tenant import quote_identifier, resolve_schema
 from app.infra.db import PG_ERRORS, translate_pg_error
 from app.models.requests import SchemaCreateRequest
@@ -22,7 +22,7 @@ router = APIRouter(tags=["schemas"])
 async def list_schemas(
     caller: CallerDep, claims: ClaimsDep, request: Request
 ) -> list[dict]:
-    require_permissions(claims, "read:database")
+    require_db_access(claims, caller, "read:database")
     try:
         async with request.app.state.db.acquire() as conn:
             rows = await conn.fetch(
@@ -41,7 +41,7 @@ async def list_schemas(
 async def create_schema(
     body: SchemaCreateRequest, caller: CallerDep, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:database")
+    require_db_access(claims, caller, "write:database")
     schema = resolve_schema(caller.tenant, body.schema_name)
     try:
         async with request.app.state.db.acquire() as conn:
@@ -73,7 +73,20 @@ async def drop_schema(
     en vivo: esa tabla vive en "public", DROP SCHEMA no la toca -- sin
     esto, recrear un tenant con el mismo id hace que
     MigrationRunner/provision_tenant se salten sus migraciones creyendo
-    que ya están aplicadas, dejando el schema nuevo sin sus tablas)."""
+    que ya están aplicadas, dejando el schema nuevo sin sus tablas).
+
+    Hallazgo de seguridad (al extender caller_context para aceptar JWT de
+    usuario, ver app/deps.py): este endpoint nunca tuvo NINGÚN chequeo de
+    permiso -- antes sólo lo alcanzaba un token de servicio (ya de
+    confianza alta), pero con usuarios aceptados también habría dejado a
+    cualquier cuenta "user", sin ningún grant, borrar el schema entero de
+    su propio tenant. require_permissions (plano, no require_db_access a
+    propósito) exige el flat "write:database" -- sólo admin o un
+    servicio lo tienen; un grant de "database" por tenant (nuevo, ver
+    TENANT_GRANTABLE_PERMISSIONS) nunca alcanza para esto. Borrar un
+    tenant entero sigue siendo sólo cosa del flujo orquestado de
+    auth/app/domain/tenants.py:delete_tenant."""
+    require_permissions(claims, "write:database")
     schema = resolve_schema(caller.tenant, schema_name)
     try:
         async with request.app.state.db.acquire() as conn, conn.transaction():

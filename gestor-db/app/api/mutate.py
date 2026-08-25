@@ -6,9 +6,8 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Request
-from freya_common import require_permissions
 
-from app.deps import CallerDep, ClaimsDep
+from app.deps import CallerDep, ClaimsDep, require_db_access
 from app.domain.query_builder import (
     build_delete,
     build_insert,
@@ -42,7 +41,7 @@ _BUILDERS = {
 async def mutate(
     body: MutateRequest, caller: CallerDep, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:database")
+    require_db_access(claims, caller, "write:database")
     settings = request.app.state.settings
     schema = resolve_schema(caller.tenant, body.schema_name)
     sql, params = _BUILDERS[body.action](body)

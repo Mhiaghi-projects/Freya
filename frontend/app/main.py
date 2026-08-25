@@ -24,6 +24,7 @@ from app.api import (
     admin,
     catalog,
     cicd,
+    database,
     gamification,
     git,
     projects,
@@ -95,6 +96,7 @@ app.include_router(storage.router)
 app.include_router(cicd.router)
 app.include_router(projects.router)
 app.include_router(gamification.router)
+app.include_router(database.router)
 
 # El SPA (login + panel) vive bajo /app: HTML/CSS/JS servidos tal cual, sin
 # el sobre JSON (EnvelopeMiddleware sólo envuelve application/json). "/"

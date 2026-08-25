@@ -5,9 +5,8 @@ from __future__ import annotations
 import time
 
 from fastapi import APIRouter, Request
-from freya_common import require_permissions
 
-from app.deps import CallerDep, ClaimsDep
+from app.deps import CallerDep, ClaimsDep, require_db_access
 from app.domain.query_builder import build_select
 from app.domain.tenant import resolve_schema
 from app.infra.db import PG_ERRORS, translate_pg_error
@@ -20,7 +19,7 @@ router = APIRouter(tags=["query"])
 async def query(
     body: QueryRequest, caller: CallerDep, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "read:database")
+    require_db_access(claims, caller, "read:database")
     settings = request.app.state.settings
     schema = resolve_schema(caller.tenant, body.schema_name)
 

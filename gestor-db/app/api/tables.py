@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
-from freya_common import require_permissions
 
-from app.deps import CallerDep, ClaimsDep
+from app.deps import CallerDep, ClaimsDep, require_db_access
 from app.domain.tenant import resolve_schema
 from app.infra.db import PG_ERRORS, translate_pg_error
 
@@ -19,7 +18,7 @@ async def list_tables(
     request: Request,
     schema: str | None = Query(default=None),
 ) -> list[dict]:
-    require_permissions(claims, "read:database")
+    require_db_access(claims, caller, "read:database")
     target = resolve_schema(caller.tenant, schema)
 
     try:

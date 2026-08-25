@@ -19,6 +19,10 @@ class Settings(BaseServiceSettings):
     cicd_url: str = "https://freya-cicd:8007"
     gestor_monitoring_url: str = "https://freya-gestor-monitoring:8008"
     gamification_url: str = "https://freya-gamification:8009"
+    # gestor-db "como un RDS" para proyectos propios (docs/DECISIONS.md) --
+    # nunca expone /migrations ni DROP SCHEMA, sólo query/mutate/tables/
+    # schemas (list+create), ver app/api/database.py.
+    gestor_db_url: str = "https://freya-gestor-db:8001"
 
     # Cookies de sesión: el navegador nunca ve el JWT -- sólo frontend, que
     # lo reenvía como Authorization al hacer de gateway (app/infra/gateway.py).

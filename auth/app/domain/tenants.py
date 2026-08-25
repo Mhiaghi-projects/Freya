@@ -36,6 +36,10 @@ TENANT_GRANTABLE_PERMISSIONS: dict[str, list[str]] = {
     "git": ["read:git", "write:git"],
     "cicd": ["read:cicd", "write:cicd"],
     "project-manager": ["read:project-manager", "write:project-manager"],
+    # Acceso directo a gestor-db, como si fuera un RDS del propio proyecto
+    # (pedido explícito del usuario) -- consultar/mutar/crear tablas dentro
+    # del schema de SU tenant, sin pasar por storage/git/cicd/project-manager.
+    "database": ["read:database", "write:database"],
 }
 
 _GRANTABLE = {p for perms in TENANT_GRANTABLE_PERMISSIONS.values() for p in perms}
