@@ -1077,15 +1077,34 @@ tenant, igual que un grant humano por proyecto -- nunca un permiso plano
 de la malla interna, y por construcción no puede pasar ningún chequeo de
 `role == "admin"`.
 
-**Limitación real encontrada al redactar el hint del panel:** Traefik
-(`services/traefik/dynamic/routes.yml`) sólo enruta `PathPrefix("/")`
-hacia `frontend` -- ningún otro servicio, incluido auth, es alcanzable
-desde fuera de la red docker de Freya hoy. Una tenant_api_key sólo sirve,
-por ahora, para llamar a `https://freya-auth:8002/api/v1/auth/token` (y
-luego a cada servicio) desde OTRO CONTENEDOR en esa misma red -- no desde
-un script en una PC cualquiera de internet. Exponer auth (o un endpoint
-`/token` acotado) por Traefik para acceso genuinamente externo queda
-pendiente, fuera del pedido actual.
+**Resuelto en la misma ronda -- alcance externo real, sin tocar Traefik.**
+Se había encontrado que Traefik (`services/traefik/dynamic/routes.yml`)
+sólo enruta `PathPrefix("/")` hacia `frontend` -- ningún otro servicio,
+incluido auth, es alcanzable desde fuera de la red docker de Freya. Pedido
+explícito del usuario tras verlo: "traefik debe dirigir las peticiones del
+exterior al frontend para que funcione las apis" -- es decir, no abrir una
+ruta nueva hacia auth/gestor-db, sino terminar de apoyarse en que frontend
+YA es el único punto de entrada externo real:
+
+- `POST /api/session/token` (`frontend/app/api/session.py`, nuevo): proxy
+  público (sin sesión) hacia `POST /api/v1/auth/token` de auth. A
+  diferencia de `/sign-in`, no fija cookies -- devuelve el JWT en claro,
+  porque el caller es un script sin navegador que lo necesita para
+  mandarlo él mismo en cada llamada siguiente.
+- `web_session()` (`frontend/app/deps.py`): ahora acepta un header
+  `Authorization: Bearer <jwt>` como alternativa a la cookie de sesión --
+  si viene, gana siempre (sin caer de vuelta a cookies, sin intento de
+  refresh: un script vuelve a canjear la key cuando el JWT expira). Con
+  este único cambio, TODAS las rutas ya proxied de frontend
+  (`/api/database`, `/api/git`, `/api/storage`, `/api/cicd`,
+  `/api/projects`) quedan utilizables por un script externo sin ningún
+  cambio adicional -- todas dependen de `WebSessionDep` para resolver el
+  access_token que reenvían.
+
+El hint del panel al generar una key se actualizó de la dirección interna
+`freya-auth:8002` (sólo alcanzable entre contenedores) a `POST
+/api/session/token` en el mismo dominio del panel -- genuinamente externo,
+vía Traefik → frontend, sin abrir ningún puerto nuevo.
 
 **Al borrar un tenant**, `delete_tenant` ahora también borra sus filas de
 `tenant_api_keys` (antes de esta ronda no había ninguna que borrar) --

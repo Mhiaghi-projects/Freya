@@ -73,7 +73,24 @@ async def _refresh(
 async def web_session(request: Request, response: Response) -> WebSession:
     """Sesión del navegador vía cookies httponly. Si el access token caducó
     pero el refresh sigue vivo, renueva de forma transparente -- el
-    front-end no tiene que saber que esto ocurrió."""
+    front-end no tiene que saber que esto ocurrió.
+
+    O -- pedido explícito del usuario: "traefik debe dirigir las
+    peticiones del exterior al frontend para que funcione las apis" --
+    un Bearer JWT directo en Authorization, para scripts externos que no
+    tienen cookies (típicamente el JWT de una tenant_api_key, canjeado
+    antes vía POST /api/session/token). Traefik sólo expone frontend al
+    exterior (services/traefik/dynamic/routes.yml); ésta es la puerta real
+    para que esos scripts usen /api/database, /api/git, etc. sin abrir
+    ninguna ruta nueva hacia auth/gestor-db. Si viene Authorization, gana
+    siempre y sin red de seguridad: un token inválido o caducado es 401 de
+    una, nunca cae de vuelta a cookies que un script no tiene -- y sin
+    refresh tampoco, se vuelve a canjear la key cuando haga falta."""
+    if (auth_header := request.headers.get("Authorization", "")).startswith("Bearer "):
+        token = auth_header.removeprefix("Bearer ").strip()
+        claims = await request.app.state.verifier.verify(token)
+        return WebSession(claims=claims, access_token=token)
+
     settings = get_settings()
     access_token = request.cookies.get(settings.access_cookie_name)
     if access_token:

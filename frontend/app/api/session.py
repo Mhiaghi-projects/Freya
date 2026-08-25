@@ -25,6 +25,11 @@ class SignInBody(BaseModel):
     password: str = Field(min_length=1)
 
 
+class TenantKeyTokenBody(BaseModel):
+    key_id: str = Field(min_length=1)
+    api_secret: str = Field(min_length=1)
+
+
 class ChangePasswordBody(BaseModel):
     current_password: str = Field(min_length=1)
     new_password: str = Field(min_length=8)
@@ -65,6 +70,28 @@ async def sign_in(
         "user": data["user"],
         "must_change_password": data["must_change_password"],
     }
+
+
+@router.post("/token")
+async def tenant_key_token(
+    body: TenantKeyTokenBody, request: Request, settings: SettingsDep
+) -> dict:
+    """Canjea una tenant_api_key ("como las nubes") por un JWT -- pedido
+    explícito del usuario: "traefik debe dirigir las peticiones del
+    exterior al frontend para que funcione las apis". Traefik sólo expone
+    frontend (services/traefik/dynamic/routes.yml, `PathPrefix("/")`);
+    éste es el único punto de entrada externo real para un script que no
+    tiene navegador ni cookies, así que el proxy vive aquí y no en auth
+    directo. A diferencia de /sign-in, no hay cookies que fijar: el caller
+    necesita el JWT en claro para mandarlo como `Authorization: Bearer` en
+    cada llamada siguiente (ver app/deps.py:web_session, que ahora acepta
+    ese header además de la cookie de sesión del navegador)."""
+    auth = ServiceClient(settings.auth_url, "frontend", request.app.state.http)
+    result = await auth.post(
+        "/api/v1/auth/token",
+        json={"key_id": body.key_id, "api_secret": body.api_secret},
+    )
+    return ServiceClient.data(result)
 
 
 @router.post("/sign-out", status_code=204)

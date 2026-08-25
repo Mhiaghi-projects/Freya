@@ -622,20 +622,25 @@ plano de la malla interna.
 | POST | `/api/admin/tenants/{tenant_id}/api-keys` | Genera una key (`body: {"name": "...", "permissions": ["read:git", ...]}`). Devuelve `api_secret` **en claro, una única vez** — ni el panel ni la API lo vuelven a mostrar después, sólo se guarda su hash (Argon2id) |
 | GET | `/api/admin/tenants/{tenant_id}/api-keys` | Lista las keys del tenant (sin el secreto) |
 | DELETE | `/api/admin/tenants/{tenant_id}/api-keys/{key_id}` | Revoca una key. Irreversible — cualquier script que la use deja de poder autenticarse |
+| POST | `/api/session/token` | **Público, sin sesión.** Canjea `{"key_id": "...", "api_secret": "..."}` por un JWT (proxy hacia `POST /api/v1/auth/token` de auth, §15.4) — a diferencia de `/api/session/sign-in`, no fija cookies: devuelve el JWT en claro para que el script lo mande él mismo |
 
-El JWT que se obtiene al canjear una key (§15.4) es, a propósito,
-estructuralmente idéntico al de un usuario: mismo `tenant_grants:
-{tenant: permissions}` que storage/git/cicd/project-manager/gestor-db ya
-saben leer — cero cambios en esos servicios. `permissions` plano queda
-siempre vacío y `role: "tenant_key"`.
+El JWT que se obtiene al canjear una key es, a propósito, estructuralmente
+idéntico al de un usuario: mismo `tenant_grants: {tenant: permissions}`
+que storage/git/cicd/project-manager/gestor-db ya saben leer — cero
+cambios en esos servicios. `permissions` plano queda siempre vacío y
+`role: "tenant_key"`.
 
-**Limitación real de hoy:** Traefik sólo enruta tráfico externo hacia
-`frontend` (`services/traefik/dynamic/routes.yml`, `PathPrefix("/")`) —
-ningún otro servicio, incluido auth, es alcanzable desde fuera de la red
-docker de Freya. Una tenant_api_key sirve, por ahora, para llamadas
-service-to-service **dentro** de esa red (otro contenedor que se una a
-ella), no desde un script en una máquina cualquiera de internet. Exponer
-auth por Traefik para acceso genuinamente externo queda pendiente.
+**Alcance externo real, sin exponer nada nuevo por Traefik.** Traefik sólo
+enruta tráfico externo hacia `frontend` (`services/traefik/dynamic/
+routes.yml`, `PathPrefix("/")`) — ningún otro servicio, incluido auth, es
+alcanzable desde fuera de la red docker de Freya. Por eso el canje vive en
+`/api/session/token` (frontend, arriba) y no en auth directo: un script
+externo hace `POST https://<host>/api/session/token` para obtener el JWT,
+y lo manda como `Authorization: Bearer <jwt>` contra cualquier ruta ya
+proxied de frontend (`/api/database`, `/api/git`, `/api/storage`,
+`/api/cicd`, `/api/projects`) — `web_session()` (`frontend/app/deps.py`,
+§16.1) acepta ese header como alternativa a la cookie de sesión del
+navegador, sin caer de vuelta a ella si el JWT es inválido.
 
 **Creación de tenant — Response `201`**
 ```json
@@ -2936,6 +2941,16 @@ cabecera sola:
 
 Body nunca lleva `tenant_id`: nunca formó parte del contrato real, ni en
 el diseño original ni en el actual.
+
+**Cómo frontend resuelve de quién es la llamada** (`web_session()`,
+`frontend/app/deps.py`): cookie httponly de sesión del navegador por
+defecto, con refresh transparente si el access token caducó; o, si la
+petición trae `Authorization: Bearer <jwt>`, ese JWT directamente — sin
+caer de vuelta a la cookie si es inválido, y sin refresh (un script vuelve
+a canjear su tenant_api_key cuando expira, §3.9.1). Es la puerta real para
+que un script externo use `/api/database`, `/api/git`, etc. — Traefik sólo
+expone `frontend`, así que éste es el único punto de entrada externo
+posible (§3.9.1).
 
 ### 16.2 Idempotencia
 POST que crean recursos aceptan `Idempotency-Key`. La respuesta se cachea 24h; un reintento con la misma key devuelve la respuesta original sin re-ejecutar.

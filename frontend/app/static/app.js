@@ -1226,7 +1226,7 @@ route("admin-tenants", async (content) => {
         el("p", { class: "muted" }, `Key ID (público, va en cada llamada): `, el("code", {}, created.key_id)),
         el("textarea", { class: "secret-value", readonly: "true", rows: "2" }, created.api_secret),
         el("p", { class: "muted" },
-          `Desde cualquier contenedor de la red de Freya: POST https://freya-auth:8002/api/v1/auth/token con {"key_id": "${created.key_id}", "api_secret": "..."} devuelve un JWT de corta duración -- se vuelve a pedir cuando expira, no hace falta guardar el JWT.`),
+          `Desde fuera de la red de Freya: POST /api/session/token (mismo dominio que este panel) con {"key_id": "${created.key_id}", "api_secret": "..."} devuelve un JWT de corta duración. Usalo como "Authorization: Bearer <jwt>" contra /api/database, /api/git, /api/storage, /api/cicd o /api/projects -- se vuelve a pedir cuando expira, no hace falta guardarlo.`),
         el("button", { class: "btn", type: "button", onclick: () => box.remove() }, "Ya lo copié"),
       );
       tr.querySelector(".tenant-keys-panel").prepend(box);
