@@ -1,7 +1,7 @@
 """Vista de database (docs/DECISIONS.md, "gestor-db como un RDS"): proxy
-delgado sobre gestor-db/app/api/{query,mutate,tables,schemas}.py. Sólo
-expone lectura/escritura de filas y creación/listado de schemas -- nunca
-DROP SCHEMA ni /migrations (DDL crudo), que gestor-db exige de forma
+delgado sobre gestor-db/app/api/{query,mutate,tables,databases}.py. Sólo
+expone lectura/escritura de filas y creación/listado de bases -- nunca
+DROP DATABASE ni /migrations (DDL crudo), que gestor-db exige de forma
 deliberada como flat/servicio-only (ver gestor-db/app/deps.py)."""
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ class OrderBy(BaseModel):
 class QueryRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_name: str | None = Field(default=None, alias="schema")
+    database_name: str | None = Field(default=None, alias="database")
     table: str
     select: list[str] | None = None
     where: dict[str, Any] | None = None
@@ -42,7 +42,7 @@ class QueryRequest(BaseModel):
 class MutateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_name: str | None = Field(default=None, alias="schema")
+    database_name: str | None = Field(default=None, alias="database")
     table: str
     action: Literal["insert", "update", "delete", "upsert"]
     where: dict[str, Any] | None = None
@@ -51,24 +51,26 @@ class MutateRequest(BaseModel):
     conflict_target: list[str] | None = None
 
 
-class SchemaCreateRequest(BaseModel):
+class DatabaseCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_name: str = Field(alias="schema")
+    database_name: str = Field(alias="database")
 
 
-@router.get("/schemas")
-async def list_schemas(client: DatabaseClient, project: str | None = None) -> list:
-    return ServiceClient.data(await client.get("/schemas", tenant=_tenant(project)))
+@router.get("/databases")
+async def list_databases(client: DatabaseClient, project: str | None = None) -> list:
+    return ServiceClient.data(
+        await client.get("/databases", tenant=_tenant(project))
+    )
 
 
-@router.post("/schemas", status_code=201)
-async def create_schema(
-    body: SchemaCreateRequest, client: DatabaseClient, project: str | None = None
+@router.post("/databases", status_code=201)
+async def create_database(
+    body: DatabaseCreateRequest, client: DatabaseClient, project: str | None = None
 ) -> dict:
     return ServiceClient.data(
         await client.post(
-            "/schemas",
+            "/databases",
             json=body.model_dump(by_alias=True),
             tenant=_tenant(project),
         )
@@ -78,10 +80,10 @@ async def create_schema(
 @router.get("/tables")
 async def list_tables(
     client: DatabaseClient,
-    schema: str | None = Query(default=None),
+    database: str | None = Query(default=None),
     project: str | None = None,
 ) -> list:
-    params = {"schema": schema} if schema else {}
+    params = {"database": database} if database else {}
     return ServiceClient.data(
         await client.get("/tables", params=params, tenant=_tenant(project))
     )

@@ -29,7 +29,6 @@ services:
       # por la red privada freya-db (ver docs/ARCHITECTURE.md §3).
       FREYA_POSTGRES_HOST: "freya-database"
       FREYA_POSTGRES_PORT: "5432"
-      FREYA_POSTGRES_DB: "${POSTGRES_DB:-freya}"
       FREYA_POSTGRES_USER: "${POSTGRES_USER:-freya}"
 
     volumes:

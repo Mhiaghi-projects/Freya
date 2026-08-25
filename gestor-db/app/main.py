@@ -1,9 +1,11 @@
 """Punto de entrada de gestor-db.
 
-Única puerta a PostgreSQL de toda Freya (docs/ARCHITECTURE.md §3). El pool
-de conexiones vive en app.state.db durante toda la vida del proceso; /ready
-lo usa para reflejar el estado real de la base, no el de `auth` (gestor-db
-no depende de auth hasta el retorno de la Fase 2, gdb-08).
+Única puerta a PostgreSQL de toda Freya (docs/ARCHITECTURE.md §3). Sin
+pool persistente: cada tenant es su propia base física (pedido explícito
+del usuario), así que "la" conexión de turno se abre y se cierra por
+petición (app.domain.pool.Database) -- /ready abre una conexión efímera
+propia para reflejar el estado real de la base, no el de `auth`
+(gestor-db no depende de auth hasta el retorno de la Fase 2, gdb-08).
 
 Rutas sin prefijo /api/v1: es un contrato interno, no expuesto por el
 gateway (docs/freya-api-contract.md §15).
@@ -23,7 +25,7 @@ from freya_common import (
     create_app,
 )
 
-from app.api import admin, migrations, mutate, query, schemas, tables, transaction
+from app.api import admin, databases, migrations, mutate, query, tables, transaction
 from app.config import get_settings
 from app.domain.pool import Database
 
@@ -39,11 +41,8 @@ async def lifespan(app: FastAPI):
     app.state.db = Database(
         host=settings.postgres_host,
         port=settings.postgres_port,
-        database=settings.postgres_db,
         user=settings.postgres_user,
         password=settings.postgres_password,
-        min_size=settings.pool_min_size,
-        max_size=settings.pool_max_size,
         command_timeout=settings.pool_command_timeout_seconds,
     )
     await app.state.db.start()
@@ -75,7 +74,8 @@ async def lifespan(app: FastAPI):
 
 
 async def check_database() -> str | None:
-    """Comprobación de dependencia para /ready: el pool responde de verdad."""
+    """Comprobación de dependencia para /ready: una conexión efímera
+    propia, no el estado de un pool cacheado (ya no existe)."""
     return await app.state.db.ping()
 
 
@@ -89,7 +89,7 @@ app = create_app(
 app.include_router(query.router)
 app.include_router(mutate.router)
 app.include_router(transaction.router)
-app.include_router(schemas.router)
+app.include_router(databases.router)
 app.include_router(tables.router)
 app.include_router(migrations.router)
 app.include_router(admin.router)

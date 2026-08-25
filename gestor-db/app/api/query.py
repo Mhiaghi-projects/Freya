@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request
 
 from app.deps import CallerDep, ClaimsDep, require_db_access
 from app.domain.query_builder import build_select
-from app.domain.tenant import resolve_schema
+from app.domain.tenant import resolve_database
 from app.infra.db import PG_ERRORS, translate_pg_error
 from app.models.requests import QueryRequest
 
@@ -21,7 +21,7 @@ async def query(
 ) -> dict:
     require_db_access(claims, caller, "read:database")
     settings = request.app.state.settings
-    schema = resolve_schema(caller.tenant, body.schema_name)
+    database = resolve_database(caller.tenant, body.database_name)
 
     order_by = (
         [item.model_dump() for item in body.order_by] if body.order_by else None
@@ -37,7 +37,7 @@ async def query(
 
     started = time.perf_counter()
     try:
-        async with request.app.state.db.acquire(schema=schema) as conn:
+        async with request.app.state.db.acquire(database) as conn:
             rows = await conn.fetch(
                 sql, *params, timeout=settings.query_timeout_seconds
             )

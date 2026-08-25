@@ -22,7 +22,7 @@ async def gdb_query(
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {
-        "schema": tenant,
+        "database": tenant,
         "table": table,
         "limit": limit,
         "offset": offset,
@@ -48,7 +48,7 @@ async def gdb_mutate(
     returning: list[str] | None = None,
     conflict_target: list[str] | None = None,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {"schema": tenant, "table": table, "action": action}
+    body: dict[str, Any] = {"database": tenant, "table": table, "action": action}
     if where is not None:
         body["where"] = where
     if data is not None:

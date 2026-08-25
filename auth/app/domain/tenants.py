@@ -38,7 +38,8 @@ TENANT_GRANTABLE_PERMISSIONS: dict[str, list[str]] = {
     "project-manager": ["read:project-manager", "write:project-manager"],
     # Acceso directo a gestor-db, como si fuera un RDS del propio proyecto
     # (pedido explícito del usuario) -- consultar/mutar/crear tablas dentro
-    # del schema de SU tenant, sin pasar por storage/git/cicd/project-manager.
+    # de la base de datos de SU tenant, sin pasar por storage/git/cicd/
+    # project-manager.
     "database": ["read:database", "write:database"],
 }
 
@@ -77,23 +78,26 @@ async def create_tenant(
 
 
 async def delete_tenant(client: ServiceClient, tenant_id: str) -> None:
-    """Borra el tenant de verdad: TODOS sus schemas en gestor-db (DROP ...
-    CASCADE) -- el principal, que storage, git, cicd y project-manager
-    comparten, más cualquier schema con nombre adicional que el propio
-    tenant se haya creado vía gestor-db "como un RDS" (p.ej.
-    "heracles_staging") -- junto con el registro y cualquier grant que
-    alguien tuviera para él. Pedido explícito del usuario: "el admin puede
-    eliminar tenant cargándose todo lo que tiene ese tenant" -- el aviso de
-    antemano es cosa del panel (confirm()), esto ya asume que se confirmó.
+    """Borra el tenant de verdad: TODAS sus bases de datos en gestor-db
+    (DROP DATABASE, cada una es una base Postgres física real -- pedido
+    explícito del usuario, aislamiento real) -- la principal, que storage,
+    git, cicd y project-manager comparten, más cualquier base con nombre
+    adicional que el propio tenant se haya creado vía gestor-db "como un
+    RDS" (p.ej. "heracles_staging") -- junto con el registro y cualquier
+    grant que alguien tuviera para él. Pedido explícito del usuario: "el
+    admin puede eliminar tenant cargándose todo lo que tiene ese tenant"
+    -- el aviso de antemano es cosa del panel (confirm()), esto ya asume
+    que se confirmó.
 
-    Llama a gestor-db/app/api/admin.py:delete_all_schemas en vez de
-    DELETE /schemas/{schema} (que sólo borra un schema a la vez, pensado
-    para que un proyecto gestione los suyos uno por uno) -- de lo contrario
-    un schema con nombre adicional quedaría huérfano al borrar el tenant.
+    Llama a gestor-db/app/api/admin.py:delete_all_databases en vez de
+    DELETE /databases/{name} (que sólo borra una base a la vez, pensado
+    para que un proyecto gestione las suyas una por una) -- de lo
+    contrario una base con nombre adicional quedaría huérfana al borrar
+    el tenant.
 
     "freya" nunca es borrable por aquí -- es el plano de control (esta
-    misma tabla vive en su schema); borrarlo se llevaría por delante toda
-    la plataforma, no un proyecto."""
+    misma tabla vive en su propia base); borrarlo se llevaría por delante
+    toda la plataforma, no un proyecto."""
     if tenant_id == CONTROL_PLANE_TENANT:
         raise BadRequest(f"el tenant '{CONTROL_PLANE_TENANT}' no se puede eliminar")
     await get_tenant(client, tenant_id)  # 404 si no existe

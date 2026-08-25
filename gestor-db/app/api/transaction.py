@@ -15,7 +15,7 @@ from app.domain.query_builder import (
     build_update,
     build_upsert,
 )
-from app.domain.tenant import resolve_schema
+from app.domain.tenant import resolve_database
 from app.infra.db import PG_ERRORS, parse_rows_affected, translate_pg_error
 from app.models.requests import Operation, TransactionRequest
 
@@ -59,13 +59,13 @@ async def transaction(
 ) -> dict:
     require_db_access(claims, caller, "write:database")
     settings = request.app.state.settings
-    schema = resolve_schema(caller.tenant, body.schema_name)
+    database = resolve_database(caller.tenant, body.database_name)
 
     results: list[dict[str, Any]] = []
     started = time.perf_counter()
     try:
         async with (
-            request.app.state.db.acquire(schema=schema) as conn,
+            request.app.state.db.acquire(database) as conn,
             conn.transaction(isolation=body.isolation_level),
         ):
             for op in body.operations:

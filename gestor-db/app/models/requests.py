@@ -15,10 +15,11 @@ class OrderBy(BaseModel):
 class QueryRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    # Opcional a propósito (resolve_schema): sin "schema" en el cuerpo, se
-    # usa el propio tenant del llamante -- el caso normal para un proyecto
-    # que consulta sus propias tablas "como un RDS" (gestor-db/app/deps.py).
-    schema_name: str | None = Field(default=None, alias="schema")
+    # Opcional a propósito (resolve_database): sin "database" en el
+    # cuerpo, se usa la propia base del tenant del llamante -- el caso
+    # normal para un proyecto que consulta sus propias tablas "como un
+    # RDS" (gestor-db/app/deps.py).
+    database_name: str | None = Field(default=None, alias="database")
     table: str
     select: list[str] | None = None
     where: dict[str, Any] | None = None
@@ -30,7 +31,7 @@ class QueryRequest(BaseModel):
 class MutateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_name: str | None = Field(default=None, alias="schema")
+    database_name: str | None = Field(default=None, alias="database")
     table: str
     action: Literal["insert", "update", "delete", "upsert"]
     where: dict[str, Any] | None = None
@@ -52,17 +53,17 @@ class Operation(BaseModel):
 class TransactionRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_name: str | None = Field(default=None, alias="schema")
+    database_name: str | None = Field(default=None, alias="database")
     operations: list[Operation] = Field(min_length=1)
     isolation_level: Literal["read_committed", "repeatable_read", "serializable"] = (
         "read_committed"
     )
 
 
-class SchemaCreateRequest(BaseModel):
+class DatabaseCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_name: str = Field(alias="schema")
+    database_name: str = Field(alias="database")
 
 
 class MigrationItem(BaseModel):
@@ -73,5 +74,5 @@ class MigrationItem(BaseModel):
 class MigrationsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_name: str = Field(alias="schema")
+    database_name: str = Field(alias="database")
     migrations: list[MigrationItem] = Field(min_length=1)

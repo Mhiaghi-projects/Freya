@@ -2,7 +2,7 @@
 
 Un tenant sólo accede a su propio namespace: el {namespace} de la ruta tiene
 que coincidir con X-Tenant-Context, si no es TENANT_MISMATCH — igual que
-gestor-db exige que el "schema" del cuerpo pertenezca al tenant autenticado.
+gestor-db exige que el "database" del cuerpo pertenezca al tenant autenticado.
 
 La `key` es `{key:path}`, no `{key}`: los secretos de arranque importados
 usan namespacing jerárquico (`bootstrap/storage/api_secret`, ver

@@ -1,9 +1,13 @@
-"""Resolución de schema por tenant (docs/freya-api-contract.md §4, §16.1).
+"""Resolución de base de datos por tenant (docs/freya-api-contract.md §4,
+§16.1).
 
-Un schema por tenant, no por tenant+servicio: "fortuna" es el schema del
-tenant "fortuna"; "fortuna_staging" es un schema con nombre dentro del mismo
-tenant (§4.5). El "schema" del cuerpo tiene que pertenecer al tenant
-autenticado — si no, es TENANT_MISMATCH, nunca se deriva del cuerpo a ciegas.
+Una base de datos por tenant, no por tenant+servicio: "fortuna" es la
+base del tenant "fortuna"; "fortuna_staging" es una base con nombre
+dentro del mismo tenant (§4.5) -- cada tenant es una base física de
+Postgres real, no un schema compartiendo una base con los demás (pedido
+explícito del usuario: aislamiento real, no sólo lógico). El "database"
+del cuerpo tiene que pertenecer al tenant autenticado -- si no, es
+TENANT_MISMATCH, nunca se deriva del cuerpo a ciegas.
 """
 
 from __future__ import annotations
@@ -21,19 +25,19 @@ def validate_tenant(tenant: str) -> str:
     return tenant
 
 
-def resolve_schema(tenant: str, requested_schema: str | None) -> str:
-    """Sin "schema" en el cuerpo, es el propio tenant. Con uno, tiene que
-    ser el tenant o "<tenant>_algo"."""
+def resolve_database(tenant: str, requested_database: str | None) -> str:
+    """Sin "database" en el cuerpo, es el propio tenant. Con uno, tiene
+    que ser el tenant o "<tenant>_algo"."""
     validate_tenant(tenant)
-    schema = requested_schema or tenant
-    if schema != tenant and not schema.startswith(f"{tenant}_"):
+    database = requested_database or tenant
+    if database != tenant and not database.startswith(f"{tenant}_"):
         raise TenantMismatch(
-            f"El schema '{schema}' no pertenece al tenant '{tenant}'",
-            details={"schema": schema, "tenant": tenant},
+            f"La base '{database}' no pertenece al tenant '{tenant}'",
+            details={"database": database, "tenant": tenant},
         )
-    if not _IDENTIFIER.match(schema):
-        raise BadRequest(f"schema inválido: {schema!r}")
-    return schema
+    if not _IDENTIFIER.match(database):
+        raise BadRequest(f"database inválida: {database!r}")
+    return database
 
 
 def quote_identifier(name: str) -> str:

@@ -23,6 +23,6 @@ async def provision(tenant: str, claims: ClaimsDep, request: Request) -> dict:
     await request.app.state.gestor_db.post(
         "/migrations",
         tenant=tenant,
-        json={"schema": tenant, "migrations": migrations},
+        json={"database": tenant, "migrations": migrations},
     )
     return {"tenant": tenant}

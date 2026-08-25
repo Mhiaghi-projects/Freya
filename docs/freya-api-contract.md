@@ -592,18 +592,21 @@ Esta subsección documenta lo que corre hoy, no el diseño original de §3.1–3
 (ver nota al inicio del documento). Rutas reales, todas detrás de
 `https://freya.local/api/admin/...` (frontend), `Bearer` con `role: admin`.
 
-**Modelo:** un tenant es sólo aislamiento de datos (un schema en Postgres +
-un bucket `project` en storage). El acceso de un usuario a un tenant es
-independiente del tenant donde vive su propia cuenta (siempre `freya`) — se
-concede por separado, servicio por servicio, vía `user_tenant_grants`
+**Modelo:** un tenant es sólo aislamiento de datos (una base de datos
+Postgres física propia + un bucket `project` en storage). Cada tenant es
+su propia base -- no un schema compartiendo servidor con los demás (ver
+DECISIONS.md 2026-08-25: aislamiento real de conexión, no sólo lógico).
+El acceso de un usuario a un tenant es independiente del tenant donde
+vive su propia cuenta (siempre `freya`) — se concede por separado,
+servicio por servicio, vía `user_tenant_grants`
 (`auth/app/domain/tenants.py: TENANT_GRANTABLE_PERMISSIONS`):
 `storage`, `monitoring`, `git`, `cicd`, `project-manager`, `database`.
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | GET | `/api/admin/tenants` | Lista todos los tenants registrados |
-| POST | `/api/admin/tenants` | Crea el tenant y aprovisiona su schema + bucket en storage, git, cicd, project-manager **y gestor-db** (fan-out, ver `frontend/app/api/admin.py`) — el aprovisionamiento de gestor-db es explícito e idempotente (`POST /admin/tenants/{id}/provision`, `CREATE SCHEMA IF NOT EXISTS`), no depende de que los otros cuatro lo creen como efecto colateral de sus propias migraciones |
-| DELETE | `/api/admin/tenants/{tenant_id}` | Borra el tenant entero: **todos** sus schemas en gestor-db (`DROP SCHEMA ... CASCADE` sobre el principal, que storage/git/cicd/project-manager comparten, más cualquier `{tenant_id}_*` que el propio tenant se haya creado vía gestor-db "como un RDS", ver `gestor-db/app/api/admin.py:delete_all_schemas`) + directorio físico de blobs (buckets propios y los internos `git`/`artifacts`/`logs` que usan git/cicd por debajo) + filas de `user_tenant_grants` **y `tenant_api_keys`** (§3.9.1). **Irreversible.** Rechaza `tenant_id = "freya"` con `400` — el tenant de control-plane nunca se borra |
+| POST | `/api/admin/tenants` | Crea el tenant y aprovisiona la base de datos + bucket en storage, git, cicd, project-manager **y gestor-db** (fan-out, ver `frontend/app/api/admin.py`) — el aprovisionamiento de gestor-db es explícito e idempotente (`POST /admin/tenants/{id}/provision`, `CREATE DATABASE` si no existe), no depende de que los otros cuatro lo creen como efecto colateral de sus propias migraciones |
+| DELETE | `/api/admin/tenants/{tenant_id}` | Borra el tenant entero: **todas** sus bases de datos en gestor-db (`DROP DATABASE ... WITH (FORCE)` sobre la principal, que storage/git/cicd/project-manager comparten, más cualquier `{tenant_id}_*` que el propio tenant se haya creado vía gestor-db "como un RDS", ver `gestor-db/app/api/admin.py:delete_all_databases`) + directorio físico de blobs (buckets propios y los internos `git`/`artifacts`/`logs` que usan git/cicd por debajo) + filas de `user_tenant_grants` **y `tenant_api_keys`** (§3.9.1). **Irreversible.** Rechaza `tenant_id = "freya"` con `400` — el tenant de control-plane nunca se borra |
 | GET | `/api/admin/tenant-grants` | Servicios concedibles por tenant y sus permisos (`{"storage": ["read:storage","write:storage"], ...}`) |
 | GET | `/api/admin/users/{user_id}/tenants` | Grants actuales del usuario, por tenant |
 | PUT | `/api/admin/users/{user_id}/tenants/{tenant_id}` | Reemplaza los permisos del usuario para ese tenant (`body: {"permissions": ["read:storage","write:storage"]}`) — lista vacía retira el acceso |
@@ -680,7 +683,7 @@ Ejecuta lectura. El gateway impide operaciones de escritura en este endpoint.
 **Request**
 ```json
 {
-  "schema": "fortuna",
+  "database": "fortuna",
   "table": "transactions",
   "select": ["id", "amount", "status", "created_at"],
   "where": {
@@ -720,7 +723,7 @@ Ejecuta lectura. El gateway impide operaciones de escritura en este endpoint.
 }
 ```
 
-**Errores:** `VALIDATION_ERROR` (422) si el schema no pertenece al tenant, `TENANT_MISMATCH` (403), `UPSTREAM_TIMEOUT` (504) si la query excede el timeout.
+**Errores:** `VALIDATION_ERROR` (422) si la database no pertenece al tenant, `TENANT_MISMATCH` (403), `UPSTREAM_TIMEOUT` (504) si la query excede el timeout.
 
 ---
 
@@ -729,7 +732,7 @@ Ejecuta lectura. El gateway impide operaciones de escritura en este endpoint.
 **Request — insert**
 ```json
 {
-  "schema": "fortuna",
+  "database": "fortuna",
   "table": "transactions",
   "action": "insert",
   "data": { "amount": 1500, "status": "pending", "user_ref": "usr_01H8X" },
@@ -740,7 +743,7 @@ Ejecuta lectura. El gateway impide operaciones de escritura en este endpoint.
 **Request — update**
 ```json
 {
-  "schema": "fortuna",
+  "database": "fortuna",
   "table": "transactions",
   "action": "update",
   "where": { "id": 42 },
@@ -752,7 +755,7 @@ Ejecuta lectura. El gateway impide operaciones de escritura en este endpoint.
 **Request — delete**
 ```json
 {
-  "schema": "fortuna",
+  "database": "fortuna",
   "table": "transactions",
   "action": "delete",
   "where": { "id": 42 }
@@ -786,7 +789,7 @@ Ejecuta lectura. El gateway impide operaciones de escritura en este endpoint.
 **Request**
 ```json
 {
-  "schema": "fortuna",
+  "database": "fortuna",
   "operations": [
     { "action": "insert", "table": "transactions", "data": { "amount": 500 }, "alias": "tx" },
     { "action": "update", "table": "balances", "where": { "user_ref": "usr_01H8X" }, "data": { "amount": { "decrement": 500 } } }
@@ -825,16 +828,16 @@ Ejecuta lectura. El gateway impide operaciones de escritura en este endpoint.
 
 ---
 
-### 4.4 `GET /database/schemas`
-**Response `200`** — `data: [{ "schema": "fortuna", "table_count": 12, "size_bytes": 4194304, "created_at": ... }]`
+### 4.4 `GET /database/databases`
+**Response `200`** — `data: [{ "database": "fortuna", "table_count": 12, "size_bytes": 4194304, "created_at": ... }]`
 
-### 4.5 `POST /database/schemas`
-**Request:** `{ "schema": "fortuna_staging" }`
-**Response `201`** — `data: { "schema": "fortuna_staging", "created_at": ... }`
-**Errores:** `DUPLICATE_RESOURCE` (409), `QUOTA_EXCEEDED` (403) si el tenant alcanzó su límite de schemas.
+### 4.5 `POST /database/databases`
+**Request:** `{ "database": "fortuna_staging" }`
+**Response `201`** — `data: { "database": "fortuna_staging", "created_at": ... }`
+**Errores:** `DUPLICATE_RESOURCE` (409), `QUOTA_EXCEEDED` (403) si el tenant alcanzó su límite de bases.
 
 ### 4.6 `GET /database/tables`
-**Query:** `schema` (obligatorio)
+**Query:** `database` (obligatorio)
 **Response `200`** — `data: [{ "table": "transactions", "row_count": 8420, "size_bytes": 1048576, "columns": [{ "name": "id", "type": "bigint", "nullable": false }] }]`
 
 ---

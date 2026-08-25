@@ -33,7 +33,7 @@ async def provision_tenant(
     await client.post(
         "/migrations",
         tenant=tenant,
-        json={"schema": tenant, "migrations": migrations},
+        json={"database": tenant, "migrations": migrations},
     )
     try:
         await create_bucket(

@@ -1120,3 +1120,95 @@ plataforma, uno por fila; un tenant necesita poder tener varias keys
 (rotación sin downtime: emitir la nueva, migrar el script, recién ahí
 revocar la vieja) y su propio scoping por `TENANT_GRANTABLE_PERMISSIONS`,
 no por permisos planos de la malla interna.
+
+---
+
+## 2026-08-25 — gestor-db: cada tenant es su propia base de datos, no un
+schema compartido
+
+Pedido explícito del usuario, tras preguntar por qué gestor-db hacía
+`CREATE SCHEMA heracles` en vez de `CREATE DATABASE heracles`: "por que
+no... create database heracles?... que beneficios me trae cada uno?". Se
+discutió el tradeoff real (aislamiento de conexión/blast-radius vs
+simplicidad de un único pool + `search_path`) y se decidió: **base de
+datos real por tenant**, misma instancia de Postgres (recursos limitados,
+se descartó separar por instancias). Dos decisiones de diseño más,
+también explícitas del usuario, que hacen viable el cambio:
+
+1. **Conexión por request, sin pool persistente.** "Cada vez que
+   consultas la base de datos debes cerrar tu conexion, Freya debe seguir
+   lo mismo." Resuelve de raíz la objeción de `max_connections=40`
+   (`services/database/docker-compose.yml`, afinado para memoria escasa):
+   con un pool por tenant, N tenants activos multiplican conexiones
+   reservadas; con conexión-por-request, el techo lo pone cuántas
+   peticiones están en vuelo a la vez, no cuántos tenants existen.
+2. **"schema" → "database" en toda la superficie de la API** (rutas,
+   campos JSON, docs). Se discutió explícitamente esta alternativa
+   también: mantener "schema" por compatibilidad con lo recién publicado,
+   vs renombrar. Se optó por renombrar -- con aislamiento real de base de
+   datos, seguir diciendo "schema" en la API pública sería engañoso para
+   cualquiera que integre desde afuera esperando semántica tipo
+   RDS/Supabase (justo el caso de uso: "otros proyectos usen Freya como
+   un RDS"), y el costo de renombrar era mínimo con la funcionalidad
+   recién nacida.
+
+**Hallazgo que redujo mucho el riesgo del cambio:**
+`gestor-db/app/domain/query_builder.py` (usado por /query, /mutate,
+/transaction) es completamente agnóstico de schema/database -- arma SQL
+de tabla/columna nomás. Todo el ruteo pasaba por un único punto,
+`Database.acquire()` en `gestor-db/app/domain/pool.py` (antes `SET
+search_path`, ahora qué base física abrir) -- cambiar ese punto más el
+resolver de nombre (`resolve_schema` → `resolve_database`,
+`gestor-db/app/domain/tenant.py`) alcanzó para migrar toda la lógica de
+negocio sin tocarla.
+
+**Diseño:**
+- `Database` (`gestor-db/app/domain/pool.py`) ya no mantiene un
+  `asyncpg.create_pool()`: `acquire(database)` abre una conexión nueva
+  (`asyncpg.connect()`) y la cierra al salir del context manager. Sin
+  `SET search_path` -- cada conexión ya apunta a la base correcta y usa
+  su `public` por defecto.
+- `ensure_database()` (`gestor-db/app/domain/migrations.py`, nuevo):
+  `CREATE DATABASE` idempotente por chequeo explícito contra
+  `pg_database` (Postgres no tiene `IF NOT EXISTS` para `CREATE
+  DATABASE`, y no admite correr dentro de una transacción). Se llama
+  desde dos lugares -- el endpoint explícito de provisión
+  (`gestor-db/app/api/admin.py`) y `apply_migrations` mismo, que ahora se
+  asegura la base sola antes de conectarse a ella -- así el fan-out de
+  creación de tenant (`frontend/app/api/admin.py:create_tenant`) no
+  depende de en qué orden lleguen sus llamadas HTTP.
+- `public.freya_schema_migrations` (compartida entre todos los tenants,
+  con columna `schema_name`) se reemplaza por `public.freya_migrations`
+  **dentro de cada base de tenant**, sin esa columna (la base ya es el
+  tenant). Beneficio directo: `DROP DATABASE` al borrar un tenant se
+  lleva su bookkeeping solo, sin un `DELETE` aparte.
+- `/schemas` → `/databases` en gestor-db y en
+  `frontend/app/api/database.py`; `"schema"` → `"database"` en los
+  cuerpos de `/query`, `/mutate`, `/transaction`, `/migrations`
+  (`freya-common/freya_common/gestor_db.py:gdb_query/gdb_mutate`, usado
+  por los 8 servicios que hablan con gestor-db, y
+  `freya-common/freya_common/migrations.py:MigrationRunner`, que corre
+  al arrancar cualquier servicio con base propia).
+- `DROP DATABASE ... WITH (FORCE)` (Postgres 16, confirmado en
+  `services/database/docker-compose.yml`) en vez de `CASCADE`: a
+  diferencia de `DROP SCHEMA`, `DROP DATABASE` no tiene ni necesita
+  `CASCADE` (borra todo su contenido siempre); `WITH (FORCE)` corta
+  conexiones colgadas contra esa base antes de borrarla, el equivalente
+  real que hacía falta.
+
+**Migración de los tenants existentes** (`freya`, `heracles`, `athenea`,
+que ya tenían datos reales como schemas): con backup completo
+(`pg_dump`) tomado antes de tocar nada. `freya` (control-plane) no
+necesitó dump/restore -- ya vivía en la base física `freya`, así que sus
+~13 tablas se movieron con `ALTER TABLE freya.<x> SET SCHEMA public`
+(transaccional, misma base). `heracles` y `athenea` sí necesitaron
+`pg_dump -n <tenant>` → `createdb` → `pg_restore` → `ALTER SCHEMA
+<tenant> RENAME TO public` en su base nueva, verificando conteo de filas
+por tabla antes de borrar el schema original.
+
+**Descartado:** separar por instancias de Postgres en vez de bases dentro
+de la misma instancia -- el usuario fue explícito: "no tengo muchos
+recursos asi que dejemosl asi". Ninguna de las dos opciones (schema o
+database) da aislamiento de *fallos* frente a un crash del propio proceso
+de Postgres -- eso sólo lo da separar instancias, que queda fuera de
+alcance por recursos.

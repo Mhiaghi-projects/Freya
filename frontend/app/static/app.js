@@ -1100,8 +1100,9 @@ route("admin-users", async (content) => {
 
 // --- tenants (proyectos) ------------------------------------------------
 // Crear un tenant es sólo aislamiento de datos (pedido explícito del
-// usuario): registra el tenant y aprovisiona su storage (schema propio +
-// bucket "project") -- no levanta ningún contenedor ni servicio nuevo.
+// usuario): registra el tenant y aprovisiona su storage (base de datos
+// propia + bucket "project") -- no levanta ningún contenedor ni servicio
+// nuevo.
 route("admin-tenants", async (content) => {
   content.appendChild(el("h2", { class: "page-title" }, "Tenants"));
   content.appendChild(el("p", { class: "muted" },

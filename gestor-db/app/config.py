@@ -15,14 +15,16 @@ class Settings(BaseServiceSettings):
 
     # Conexión nativa a database, por la red privada freya-db. Único
     # servicio de Freya con permiso para hablar el protocolo PostgreSQL.
+    # Sin "postgres_db" fijo: cada tenant es su propia base (resolve_database
+    # decide cuál en cada petición), y las operaciones de catálogo usan
+    # siempre la base ancla "postgres" (app.domain.pool.ANCHOR_DATABASE).
     postgres_host: str = "freya-database"
     postgres_port: int = 5432
-    postgres_db: str = "freya"
     postgres_user: str = "freya"
     postgres_password_file: Path = Path("/run/secrets/postgres_password")
 
-    pool_min_size: int = 2
-    pool_max_size: int = 10
+    # Sin pool persistente (una base física por tenant, conexión por
+    # petición) -- este timeout pasa directo a asyncpg.connect().
     pool_command_timeout_seconds: float = 30.0
 
     # Modo bootstrap (gdb-03): token estático hasta que auth exista.

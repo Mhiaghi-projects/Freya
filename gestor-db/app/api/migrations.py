@@ -7,7 +7,7 @@ from freya_common import require_permissions
 
 from app.deps import CallerDep, ClaimsDep
 from app.domain.migrations import apply_migrations
-from app.domain.tenant import resolve_schema
+from app.domain.tenant import resolve_database
 from app.infra.db import PG_ERRORS, translate_pg_error
 from app.models.requests import MigrationsRequest
 
@@ -19,12 +19,12 @@ async def migrate(
     body: MigrationsRequest, caller: CallerDep, claims: ClaimsDep, request: Request
 ) -> dict:
     require_permissions(claims, "write:database")
-    schema = resolve_schema(caller.tenant, body.schema_name)
+    database = resolve_database(caller.tenant, body.database_name)
     migrations = [(item.filename, item.sql) for item in body.migrations]
     try:
         return await apply_migrations(
             request.app.state.db,
-            schema=schema,
+            database=database,
             service=caller.service,
             migrations=migrations,
         )

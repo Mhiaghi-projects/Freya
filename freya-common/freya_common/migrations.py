@@ -1,8 +1,8 @@
 """Aplica migrations/*.sql contra gestor-db, con reintento en segundo plano.
 
-Mismo patrón que el pool de gestor-db: si gestor-db no está listo todavía al
-arrancar, el servicio no se cae — reintenta con backoff, y /ready lo
-refleja. Cualquier servicio con schema propio lo usa igual.
+Mismo patrón que gestor-db al arrancar: si gestor-db no está listo todavía,
+el servicio no se cae — reintenta con backoff, y /ready lo refleja.
+Cualquier servicio con base de datos propia lo usa igual.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class MigrationRunner:
                 await self._client.post(
                     "/migrations",
                     tenant=self._tenant,
-                    json={"schema": self._tenant, "migrations": self._migrations},
+                    json={"database": self._tenant, "migrations": self._migrations},
                 )
                 self._done = True
                 logger.info(
