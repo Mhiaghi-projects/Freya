@@ -1,0 +1,12 @@
+# CVE-2025-68121 -- crypto/tls: validación de certificado incorrecta
+# durante la reanudación de sesión TLS (Go stdlib, hasta 1.24.13/1.25.7/
+# 1.26.0-rc.3). Aparece SOLO en usr/local/bin/docker de la imagen de
+# cicd (docker:27-cli, aún sin una build publicada con el Go parcheado a
+# fecha de este commit). No es explotable en cómo cicd usa ese binario:
+# es sólo el CLIENTE docker, hablando exclusivamente con el socket Unix
+# montado del host (/var/run/docker.sock) para construir/ejecutar
+# contenedores de pipeline -- nunca abre una conexión TLS saliente, así
+# que la reanudación de sesión TLS de esta CVE nunca entra en juego.
+# Revisar y quitar esta excepción cuando Docker Inc. publique una build
+# de docker:27-cli (o superior) con el Go stdlib ya parcheado.
+CVE-2025-68121
