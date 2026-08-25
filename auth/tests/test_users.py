@@ -44,12 +44,16 @@ def test_git_cicd_project_manager_siguen_siendo_grants_planos() -> None:
     assert set(SERVICE_GRANTS) == {"git", "cicd", "project-manager"}
 
 
-def test_full_permissions_ignora_storage_si_se_pasa_como_extra() -> None:
-    # full_permissions no filtra -- quien valide es _validate_extra_permissions
-    # (ver el test de abajo). Documenta que ya no hay ningún camino real que
-    # llegue a pasar "read:storage" aquí desde el panel.
-    perms = full_permissions("user", [])
+def test_full_permissions_filtra_extra_permissions_no_concedibles() -> None:
+    # Hallazgo de una revisión de seguridad: storage/monitoring vivían en
+    # extra_permissions antes de pasar a ser por-tenant. Si una fila vieja
+    # de la base conservara uno de esos permisos, full_permissions() ya no
+    # debe reflejarlo en el JWT -- si no, esa cuenta tendría acceso plano a
+    # TODOS los tenants, no sólo a los concedidos en user_tenant_grants.
+    perms = full_permissions("user", ["read:storage", "write:storage", "read:git"])
     assert "read:storage" not in perms
+    assert "write:storage" not in perms
+    assert "read:git" in perms
 
 
 def test_validate_extra_permissions_ya_no_acepta_storage() -> None:

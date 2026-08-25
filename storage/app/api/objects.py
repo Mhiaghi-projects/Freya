@@ -19,10 +19,9 @@ from freya_common import (
     Forbidden,
     PayloadTooLarge,
     current_tenant,
-    require_service_access,
 )
 
-from app.deps import ClaimsDep
+from app.deps import ClaimsDep, require_storage_access
 from app.domain import blob_store
 from app.domain.objects import (
     delete_object,
@@ -123,7 +122,7 @@ async def read_versions(
     bucket: str, key: str, claims: ClaimsDep, request: Request
 ) -> list[dict]:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "read:storage")
+    require_storage_access(claims, tenant, "read:storage")
     _check_user_bucket_access(bucket, key, claims)
     return await list_versions(
         request.app.state.gestor_db, tenant, bucket=bucket, key=key
@@ -138,7 +137,7 @@ async def upload(
     request: Request,
 ) -> dict:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "write:storage")
+    require_storage_access(claims, tenant, "write:storage")
     _check_user_bucket_access(bucket, key, claims)
     settings = request.app.state.settings
 
@@ -181,7 +180,7 @@ async def download(
     versionId: str | None = Query(default=None),  # noqa: N803 - nombre del contrato
 ) -> Response:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "read:storage")
+    require_storage_access(claims, tenant, "read:storage")
     _check_user_bucket_access(bucket, key, claims)
     meta = await get_object_metadata(
         request.app.state.gestor_db,
@@ -247,7 +246,7 @@ async def head(
     versionId: str | None = Query(default=None),  # noqa: N803
 ) -> Response:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "read:storage")
+    require_storage_access(claims, tenant, "read:storage")
     _check_user_bucket_access(bucket, key, claims)
     meta = await get_object_metadata(
         request.app.state.gestor_db,
@@ -275,7 +274,7 @@ async def remove(
     versionId: str | None = Query(default=None),  # noqa: N803
 ) -> None:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "write:storage")
+    require_storage_access(claims, tenant, "write:storage")
     _check_user_bucket_access(bucket, key, claims)
     await delete_object(
         request.app.state.gestor_db,
@@ -297,7 +296,7 @@ async def list_bucket_objects(
     cursor: str | None = Query(default=None),
 ) -> dict:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "read:storage")
+    require_storage_access(claims, tenant, "read:storage")
     prefix = _resolve_user_bucket_prefix(bucket, prefix, claims)
     offset = int(cursor) if cursor and cursor.isdigit() else 0
     objects = await list_objects(

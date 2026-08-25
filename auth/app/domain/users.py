@@ -82,8 +82,16 @@ def _validate_extra_permissions(extra_permissions: list[str]) -> None:
 
 
 def full_permissions(role: str, extra_permissions: list[str]) -> list[str]:
+    # Filtra contra el conjunto concedible ACTUAL, no confía en lo que haya
+    # quedado guardado (hallazgo de seguridad: storage/monitoring vivían
+    # aquí antes de pasar a ser por-tenant -- una fila vieja con
+    # "read:storage" en extra_permissions, si sobreviviera de antes de ese
+    # cambio, daría acceso plano a TODOS los tenants, no sólo a los
+    # concedidos en user_tenant_grants. Filtrar aquí cierra ese hueco pase
+    # lo que pase con los datos.
+    known_extra = [p for p in extra_permissions if p in _GRANTABLE_PERMISSIONS]
     merged = dict.fromkeys(permissions_for_role(role))
-    merged.update(dict.fromkeys(extra_permissions))
+    merged.update(dict.fromkeys(known_extra))
     return list(merged)
 
 

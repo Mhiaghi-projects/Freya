@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
-from freya_common import Forbidden, current_tenant, require_service_access
+from freya_common import Forbidden, current_tenant
 
-from app.deps import ClaimsDep
+from app.deps import ClaimsDep, require_storage_access
 from app.domain.buckets import (
     bucket_usage,
     create_bucket,
@@ -25,7 +25,7 @@ _PROTECTED_BUCKETS = {"users"}
 @router.get("/storage/buckets")
 async def list_all(claims: ClaimsDep, request: Request) -> list[dict]:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "read:storage")
+    require_storage_access(claims, tenant, "read:storage")
     return await list_buckets(request.app.state.gestor_db, tenant)
 
 
@@ -34,7 +34,7 @@ async def create(
     bucket: str, body: BucketCreate, claims: ClaimsDep, request: Request
 ) -> dict:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "write:storage")
+    require_storage_access(claims, tenant, "write:storage")
     settings = request.app.state.settings
     return await create_bucket(
         request.app.state.gestor_db,
@@ -55,7 +55,7 @@ async def remove(
     force: bool = Query(default=False),
 ) -> None:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "write:storage")
+    require_storage_access(claims, tenant, "write:storage")
     if bucket in _PROTECTED_BUCKETS:
         raise Forbidden(f"'{bucket}' es un bucket reservado de la plataforma")
     await delete_bucket(
@@ -70,5 +70,5 @@ async def remove(
 @router.get("/storage/buckets/{bucket}/usage")
 async def usage(bucket: str, claims: ClaimsDep, request: Request) -> dict:
     tenant = current_tenant()
-    require_service_access(claims, tenant, "read:storage")
+    require_storage_access(claims, tenant, "read:storage")
     return await bucket_usage(request.app.state.gestor_db, tenant, bucket=bucket)
