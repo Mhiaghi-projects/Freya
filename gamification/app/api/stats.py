@@ -21,9 +21,12 @@ async def me(user_id: UserIdDep, request: Request) -> dict:
 
 @router.get("/leaderboard")
 async def leaderboard(
-    user_id: UserIdDep, request: Request, limit: int = Query(default=20, ge=1, le=100)
+    user_id: UserIdDep,
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    period: str = Query(default="weekly", pattern="^(weekly|alltime)$"),
 ) -> list:
     del user_id  # sólo para exigir sesión de usuario, no se usa
     client, tenant = request.app.state.gestor_db, current_tenant()
-    rows = await leaderboard_query(client, tenant, limit=limit)
+    rows = await leaderboard_query(client, tenant, limit=limit, period=period)
     return [{"rank": i + 1, **row} for i, row in enumerate(rows)]

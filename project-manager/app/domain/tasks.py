@@ -280,6 +280,14 @@ async def update_task(
         data["actual_hours"] = actual_hours
 
     if status is not None and status != task["status"]:
+        # Pedido explícito del usuario: una task en "done" queda cerrada --
+        # ya no se puede mover a ningún otro estado (antes sí se podía
+        # reabrir; ver DECISIONS.md para el motivo del cambio).
+        if task["status"] == DONE_STATUS:
+            raise Conflict(
+                "La task ya está en 'done' -- no se puede mover",
+                details={"task_id": task_id, "status": task["status"]},
+            )
         await _validate_status(
             client, tenant, project_id=task["project_id"], status=status
         )
@@ -308,15 +316,8 @@ async def update_task(
         if status == DONE_STATUS:
             data["completed_at"] = _now()
             data["completed_by"] = completed_by
-        elif task["status"] == DONE_STATUS:
-            # Reabrir una task "done" (p.ej. arrastrarla de vuelta a
-            # "in_progress") dejaba completed_at/completed_by de la
-            # completitud anterior -- dato obsoleto y engañoso para
-            # cualquiera que lo lea directamente (sprint/milestone metrics
-            # usan status, no estos campos, así que no afectaba puntajes,
-            # pero el campo en sí mentía).
-            data["completed_at"] = None
-            data["completed_by"] = None
+        # No hace falta una rama para "reabrir desde done": ya no es
+        # alcanzable -- el guard de arriba lo rechaza antes de llegar aquí.
     elif position is not None:
         data["position"] = position
 

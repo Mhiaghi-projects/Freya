@@ -28,6 +28,8 @@ _DEFAULT_STATS = {
     "current_streak": 0,
     "longest_streak": 0,
     "last_activity_date": None,
+    "weekly_xp": 0,
+    "weekly_coins": 0,
 }
 
 
@@ -111,6 +113,8 @@ async def award_xp(
     new_level = level_for_xp(new_total)
     leveled_up = new_level > stats["level"]
     streak, longest = _apply_streak(stats, today)
+    new_weekly_xp = stats.get("weekly_xp", 0) + xp
+    new_weekly_coins = stats.get("weekly_coins", 0) + coins
 
     await gdb_mutate(
         client,
@@ -126,6 +130,8 @@ async def award_xp(
             "longest_streak": longest,
             "last_activity_date": today.isoformat(),
             "updated_at": datetime.now(UTC).isoformat(),
+            "weekly_xp": new_weekly_xp,
+            "weekly_coins": new_weekly_coins,
         },
     )
     return {
@@ -136,6 +142,7 @@ async def award_xp(
         "coins": stats["coins"] + coins,
         "current_streak": streak,
         "longest_streak": longest,
+        "weekly_xp": new_weekly_xp,
     }
 
 
@@ -158,12 +165,15 @@ async def spend_coins(
 
 
 async def leaderboard(
-    client: ServiceClient, tenant: str, *, limit: int = 20
+    client: ServiceClient, tenant: str, *, limit: int = 20, period: str = "weekly"
 ) -> list[dict[str, Any]]:
+    """period="weekly" (por defecto, pedido explícito del usuario: el
+    leaderboard compite semana a semana, no de por vida) o "alltime"."""
+    field = "weekly_xp" if period == "weekly" else "total_xp"
     return await gdb_query(
         client,
         tenant,
         table="gam_user_stats",
-        order_by=[{"field": "total_xp", "direction": "desc"}],
+        order_by=[{"field": field, "direction": "desc"}],
         limit=limit,
     )

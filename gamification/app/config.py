@@ -15,6 +15,10 @@ class Settings(BaseServiceSettings):
 
     project_manager_url: str = "https://freya-project-manager:8006"
     task_sync_interval_seconds: int = 15
+    # El leaderboard semanal (pedido explícito del usuario) sólo cambia de
+    # semana una vez a la semana -- revisarlo cada hora sobra de margen sin
+    # ser un poll caro corriendo cada pocos segundos como el de tasks.
+    weekly_reset_interval_seconds: int = 3600
 
     # Sincronización desde GitHub Issues en vez de project-manager
     # (docs/DECISIONS.md, "migrar git/project-manager/cicd a GitHub").

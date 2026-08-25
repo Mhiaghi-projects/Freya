@@ -165,7 +165,13 @@ async def list_projects(client: ServiceClient, tenant: str) -> list[dict[str, An
         client,
         tenant,
         table="pm_projects",
-        select=["id", "project_name", "project_type", "visibility", "created_at"],
+        # team_members: TaskSyncer (gamification) lo necesita para premiar
+        # a todo el equipo del proyecto cuando una task llega a "done", sin
+        # una llamada aparte por proyecto en cada ciclo de sync.
+        select=[
+            "id", "project_name", "project_type", "visibility",
+            "team_members", "created_at",
+        ],
         where={"deleted_at": {"is_null": True}},
         order_by=[{"field": "project_name", "direction": "asc"}],
         limit=200,

@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.domain.achievements import seed_catalog
 from app.domain.github_task_sync import GitHubTaskSyncer
 from app.domain.task_sync import TaskSyncer
+from app.domain.weekly_reset import WeeklyResetter
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -74,6 +75,12 @@ async def lifespan(app: FastAPI):
         settings.task_sync_interval_seconds,
     )
 
+    app.state.weekly_resetter = WeeklyResetter(
+        app.state.gestor_db,
+        settings.default_tenant,
+        settings.weekly_reset_interval_seconds,
+    )
+
     # Apagado por defecto (settings.use_github_task_sync) -- ver
     # app/domain/github_task_sync.py y docs/DECISIONS.md. Usa un "source"
     # distinto al de TaskSyncer en gam_xp_events, así que los dos pueden
@@ -110,6 +117,7 @@ async def lifespan(app: FastAPI):
     finally:
         app.state.seed_task.cancel()
         await app.state.task_syncer.stop()
+        await app.state.weekly_resetter.stop()
         if app.state.github_task_syncer is not None:
             await app.state.github_task_syncer.stop()
         await app.state.migrations.stop()
@@ -127,6 +135,7 @@ async def _seed_and_start_sync(app: FastAPI) -> None:
         await asyncio.sleep(1)
     await seed_catalog(app.state.gestor_db, settings.default_tenant)
     app.state.task_syncer.start()
+    app.state.weekly_resetter.start()
     if app.state.github_task_syncer is not None:
         app.state.github_task_syncer.start()
 

@@ -1310,11 +1310,12 @@ route("progress", async (content) => {
   });
 
   // --- leaderboard ---
-  content.appendChild(el("h3", { class: "section-title" }, "Leaderboard"));
+  content.appendChild(el("h3", { class: "section-title" }, "Leaderboard semanal"));
+  content.appendChild(el("p", { class: "muted" }, "Se reinicia cada lunes -- compite por semana, no de por vida."));
   content.appendChild(el("table", {},
-    el("thead", {}, el("tr", {}, el("th", {}, "#"), el("th", {}, "Usuario"), el("th", {}, "Nivel"), el("th", {}, "XP"))),
+    el("thead", {}, el("tr", {}, el("th", {}, "#"), el("th", {}, "Usuario"), el("th", {}, "Nivel"), el("th", {}, "XP esta semana"))),
     el("tbody", {}, leaders.map((l) =>
-      el("tr", {}, el("td", {}, `${l.rank}`), el("td", {}, l.user_id), el("td", {}, `${l.level}`), el("td", {}, `${l.total_xp}`))
+      el("tr", {}, el("td", {}, `${l.rank}`), el("td", {}, l.user_id), el("td", {}, `${l.level}`), el("td", {}, `${l.weekly_xp}`))
     ))
   ));
 });

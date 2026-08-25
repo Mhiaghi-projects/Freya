@@ -5,9 +5,14 @@ Poll periódico, no webhook -- mismo patrón que gestor-monitoring
 (HealthMonitor/Scraper) y storage->gestor-monitoring (LogArchiver): no hay
 bus de eventos en la plataforma, y con el volumen de tasks de este proyecto
 un poll cada pocos segundos es indistinguible de "en tiempo real" para una
-persona. gam_xp_events(source, source_ref) es la clave de deduplicación
-real -- una task ya premiada no se vuelve a mirar aunque el poll la
-encuentre otra vez en el próximo ciclo.
+persona. gam_xp_events(source, source_ref, user_id) es la clave de
+deduplicación real -- una task ya premiada para un usuario no se vuelve a
+premiar aunque el poll la encuentre otra vez en el próximo ciclo.
+
+Pedido explícito del usuario: al llegar a "done", el premio es para TODO
+el equipo del proyecto (project.team_members), no sólo para quien movió
+la tarjeta -- por eso la clave de dedupe ahora incluye user_id, una fila
+por (task, persona) en vez de una sola por task.
 """
 
 from __future__ import annotations
@@ -80,59 +85,71 @@ class TaskSyncer:
                     f"/projects/{project['id']}/tasks", params={"status": "done"}
                 )
             )
+            # Pedido explícito del usuario: al llegar a "done", premia a
+            # TODO el equipo del proyecto, no sólo a quien la completó.
+            members = project.get("team_members") or []
+            team = [u for u in members if u.startswith("usr_")]
             for task in tasks:
-                if await self._maybe_award(task):
-                    awarded += 1
+                awarded += await self._maybe_award(task, team)
         return awarded
 
-    async def _maybe_award(self, task: dict) -> bool:
-        user_id = task.get("completed_by")
-        if not user_id or not user_id.startswith("usr_"):
-            return False
-
-        existing = await gdb_query(
-            self._gestor_db,
-            self._tenant,
-            table="gam_xp_events",
-            where={"source": _SOURCE, "source_ref": task["id"]},
-        )
-        if existing:
-            return False
+    async def _maybe_award(self, task: dict, team: list[str]) -> int:
+        # completed_by también recibe su premio si además es del equipo --
+        # se incluye en `team` de forma natural (un miembro del proyecto
+        # que completa su propia task), sin trato especial aparte.
+        recipients = list(dict.fromkeys(team or [task.get("completed_by")]))
+        recipients = [u for u in recipients if u and u.startswith("usr_")]
+        if not recipients:
+            return 0
 
         xp = _xp_for_task(task)
         coins = xp
-        await gdb_mutate(
-            self._gestor_db,
-            self._tenant,
-            table="gam_xp_events",
-            action="insert",
-            data={
-                "id": new_id("xpe"),
-                "user_id": user_id,
-                "source": _SOURCE,
-                "source_ref": task["id"],
-                "xp": xp,
-                "coins": coins,
-                "created_at": datetime.now(UTC).isoformat(),
-            },
-        )
-        await award_xp(
-            self._gestor_db, self._tenant, user_id=user_id, xp=xp, coins=coins
-        )
-
-        task_count = await count_completed_tasks(self._gestor_db, self._tenant, user_id)
-        stats = await get_stats(self._gestor_db, self._tenant, user_id)
-        unlocked = await check_and_unlock(
-            self._gestor_db,
-            self._tenant,
-            user_id=user_id,
-            task_count=task_count,
-            level=stats["level"],
-            current_streak=stats["current_streak"],
-        )
-        if unlocked:
-            logger.info(
-                "logros desbloqueados",
-                extra={"user_id": user_id, "codes": [a["code"] for a in unlocked]},
+        awarded = 0
+        for user_id in recipients:
+            existing = await gdb_query(
+                self._gestor_db,
+                self._tenant,
+                table="gam_xp_events",
+                where={"source": _SOURCE, "source_ref": task["id"], "user_id": user_id},
             )
-        return True
+            if existing:
+                continue
+
+            await gdb_mutate(
+                self._gestor_db,
+                self._tenant,
+                table="gam_xp_events",
+                action="insert",
+                data={
+                    "id": new_id("xpe"),
+                    "user_id": user_id,
+                    "source": _SOURCE,
+                    "source_ref": task["id"],
+                    "xp": xp,
+                    "coins": coins,
+                    "created_at": datetime.now(UTC).isoformat(),
+                },
+            )
+            await award_xp(
+                self._gestor_db, self._tenant, user_id=user_id, xp=xp, coins=coins
+            )
+
+            task_count = await count_completed_tasks(
+                self._gestor_db, self._tenant, user_id
+            )
+            stats = await get_stats(self._gestor_db, self._tenant, user_id)
+            unlocked = await check_and_unlock(
+                self._gestor_db,
+                self._tenant,
+                user_id=user_id,
+                task_count=task_count,
+                level=stats["level"],
+                current_streak=stats["current_streak"],
+            )
+            if unlocked:
+                logger.info(
+                    "logros desbloqueados",
+                    extra={"user_id": user_id, "codes": [a["code"] for a in unlocked]},
+                )
+            awarded += 1
+        return awarded
