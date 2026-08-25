@@ -118,3 +118,22 @@ async def test_bucket_o_key_con_recorrido_de_ruta_lanza(
         await blob_store.write(
             tmp_path, "freya", bucket, key, "ver_x", _chunks(b"x"), max_bytes=_MAX
         )
+
+
+def test_delete_tenant_borra_todo_su_directorio(tmp_path: Path) -> None:
+    (tmp_path / "athenea" / "project" / "nota.txt").mkdir(parents=True)
+    (tmp_path / "athenea" / "project" / "nota.txt" / "ver_1").write_bytes(b"hola")
+    (tmp_path / "freya" / "users" / "u1").mkdir(parents=True)
+    blob_store.delete_tenant(tmp_path, "athenea")
+    assert not (tmp_path / "athenea").exists()
+    assert (tmp_path / "freya").exists()  # otros tenants intactos
+
+
+def test_delete_tenant_de_inexistente_no_falla(tmp_path: Path) -> None:
+    blob_store.delete_tenant(tmp_path, "no-existe")
+
+
+@pytest.mark.parametrize("tenant", ["..", "../etc", "a/b", "a\\b"])
+def test_delete_tenant_con_recorrido_de_ruta_lanza(tmp_path: Path, tenant: str) -> None:
+    with pytest.raises(BadRequest):
+        blob_store.delete_tenant(tmp_path, tenant)

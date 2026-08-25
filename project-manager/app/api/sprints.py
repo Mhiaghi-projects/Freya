@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
-from freya_common import current_tenant, require_permissions
+from freya_common import current_tenant, require_service_access
 
 from app.deps import ClaimsDep
 from app.domain.projects import get_project
@@ -22,8 +22,8 @@ router = APIRouter(tags=["sprints"])
 async def create(
     project_id: str, body: SprintCreate, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:project-manager")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:project-manager")
     client = request.app.state.gestor_db
     await get_project(client, tenant, project_id=project_id)
     return await create_sprint(
@@ -45,10 +45,11 @@ async def list_all(
     request: Request,
     status: str | None = Query(default=None),
 ) -> list[dict]:
-    require_permissions(claims, "read:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
     return await list_sprints(
         request.app.state.gestor_db,
-        current_tenant(),
+        tenant,
         project_id=project_id,
         status=status,
     )
@@ -58,10 +59,11 @@ async def list_all(
 async def get(
     project_id: str, sprint_id: str, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "read:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
     return await sprint_metrics(
         request.app.state.gestor_db,
-        current_tenant(),
+        tenant,
         sprint_id=sprint_id,
         project_id=project_id,
     )
@@ -75,10 +77,11 @@ async def update(
     claims: ClaimsDep,
     request: Request,
 ) -> dict:
-    require_permissions(claims, "write:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "write:project-manager")
     return await update_sprint(
         request.app.state.gestor_db,
-        current_tenant(),
+        tenant,
         sprint_id=sprint_id,
         project_id=project_id,
         status=body.status,

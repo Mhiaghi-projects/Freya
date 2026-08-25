@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from freya_common import current_tenant, require_permissions
+from freya_common import current_tenant, require_permissions, require_service_access
 
 from app.deps import ClaimsDep
 from app.domain.projects import (
@@ -21,10 +21,11 @@ router = APIRouter(tags=["projects"])
 
 @router.post("/projects", status_code=201)
 async def create(body: ProjectCreate, claims: ClaimsDep, request: Request) -> dict:
-    require_permissions(claims, "write:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "write:project-manager")
     return await create_project(
         request.app.state.gestor_db,
-        current_tenant(),
+        tenant,
         project_name=body.project_name,
         description=body.description,
         project_type=body.project_type,
@@ -38,20 +39,25 @@ async def create(body: ProjectCreate, claims: ClaimsDep, request: Request) -> di
 
 @router.get("/projects")
 async def list_all(claims: ClaimsDep, request: Request) -> list[dict]:
-    require_permissions(claims, "read:project-manager")
-    return await list_projects(request.app.state.gestor_db, current_tenant())
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
+    return await list_projects(request.app.state.gestor_db, tenant)
 
 
 @router.get("/projects/{project_id}")
 async def get(project_id: str, claims: ClaimsDep, request: Request) -> dict:
-    require_permissions(claims, "read:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
     return await get_project(
-        request.app.state.gestor_db, current_tenant(), project_id=project_id
+        request.app.state.gestor_db, tenant, project_id=project_id
     )
 
 
 @router.delete("/projects/{project_id}", status_code=204)
 async def remove(project_id: str, claims: ClaimsDep, request: Request) -> None:
+    # admin:project-manager sigue siendo un permiso plano de rol, no un
+    # acceso por proyecto -- borrar un proyecto entero es cosa de
+    # administración de verdad, mismo criterio que admin:git.
     require_permissions(claims, "admin:project-manager")
     await delete_project(
         request.app.state.gestor_db, current_tenant(), project_id=project_id
@@ -60,8 +66,8 @@ async def remove(project_id: str, claims: ClaimsDep, request: Request) -> None:
 
 @router.get("/projects/{project_id}/kanban")
 async def kanban(project_id: str, claims: ClaimsDep, request: Request) -> dict:
-    require_permissions(claims, "read:project-manager")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
     client = request.app.state.gestor_db
     await get_project(client, tenant, project_id=project_id)
     columns = await list_columns(client, tenant, project_id=project_id)

@@ -40,24 +40,18 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "read:git", "write:git", "admin:git",
         "read:cicd", "write:cicd",
         "read:monitoring", "write:monitoring",
-        "read:project-manager", "write:project-manager",
+        "read:project-manager", "write:project-manager", "admin:project-manager",
     ],
 }
 
-# Menú de accesos por servicio que un admin puede conceder a una cuenta
-# "user", combinables libremente (GET /admin/service-grants expone esto
-# para que el panel construya la lista de checkboxes). admin:git queda
-# fuera a propósito -- borrar repos no es un grant que quepa dar por
-# servicio, es cosa de administración de verdad.
-#
-# storage y monitoring NO están aquí (pedido explícito del usuario): esos
-# dos se conceden por proyecto/tenant, no de forma global -- ver
+# Vacío a propósito: git/cicd/project-manager se sumaron a storage y
+# monitoring como accesos por proyecto (pedido explícito del usuario,
+# "asimismo con el git, Drive, CI/CD, Proyectos") -- ver
 # app.domain.tenants.TENANT_GRANTABLE_PERMISSIONS y user_tenant_grants.
-SERVICE_GRANTS: dict[str, list[str]] = {
-    "git": ["read:git", "write:git"],
-    "cicd": ["read:cicd", "write:cicd"],
-    "project-manager": ["read:project-manager", "write:project-manager"],
-}
+# Se deja el mecanismo (no se borra extra_permissions ni sus endpoints)
+# por si algún futuro acceso realmente necesitara ser global en vez de
+# por proyecto -- hoy no hay ninguno.
+SERVICE_GRANTS: dict[str, list[str]] = {}
 
 _GRANTABLE_PERMISSIONS = {p for perms in SERVICE_GRANTS.values() for p in perms}
 

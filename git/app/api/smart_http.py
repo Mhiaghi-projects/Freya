@@ -9,7 +9,7 @@ no manda esa cabecera. La autenticación sigue siendo JWT de Freya
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, Response
-from freya_common import NotFound, require_permissions
+from freya_common import NotFound, require_service_access
 
 from app.deps import ClaimsDep
 from app.domain import cgi_bridge, repo_store
@@ -38,7 +38,11 @@ async def info_refs(
 ) -> Response:
     if service not in _SERVICE_PERMISSION:
         raise NotFound(f"Servicio git desconocido: '{service}'")
-    require_permissions(claims, _SERVICE_PERMISSION[service])
+    # tenant viene de la URL, no de X-Tenant-Context -- un cliente git real
+    # no manda esa cabecera (ver docstring del módulo). Comprobar contra
+    # ESTE tenant, no el de la cabecera, es lo que evita que el token de
+    # alguien con acceso a OTRO proyecto sirva para clonar/empujar aquí.
+    require_service_access(claims, tenant, _SERVICE_PERMISSION[service])
     repo = await get_repo_by_name(
         request.app.state.gestor_db, tenant, repo_name=repo_name
     )
@@ -66,7 +70,7 @@ async def info_refs(
 async def upload_pack(
     tenant: str, repo_name: str, claims: ClaimsDep, request: Request
 ) -> Response:
-    require_permissions(claims, "read:git")
+    require_service_access(claims, tenant, "read:git")
     repo = await get_repo_by_name(
         request.app.state.gestor_db, tenant, repo_name=repo_name
     )
@@ -99,7 +103,7 @@ async def receive_pack(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> Response:
-    require_permissions(claims, "write:git")
+    require_service_access(claims, tenant, "write:git")
     repo = await get_repo_by_name(
         request.app.state.gestor_db, tenant, repo_name=repo_name
     )

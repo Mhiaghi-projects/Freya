@@ -19,19 +19,33 @@ class TaskStatusUpdate(BaseModel):
     status: str
 
 
+def _tenant(project: str | None) -> str:
+    return project or "freya"
+
+
 @router.get("")
-async def list_projects(client: ProjectManagerClient) -> list:
-    return ServiceClient.data(await client.get("/projects"))
+async def list_projects(
+    client: ProjectManagerClient, project: str | None = None
+) -> list:
+    return ServiceClient.data(await client.get("/projects", tenant=_tenant(project)))
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str, client: ProjectManagerClient) -> dict:
-    return ServiceClient.data(await client.get(f"/projects/{project_id}"))
+async def get_project(
+    project_id: str, client: ProjectManagerClient, project: str | None = None
+) -> dict:
+    return ServiceClient.data(
+        await client.get(f"/projects/{project_id}", tenant=_tenant(project))
+    )
 
 
 @router.get("/{project_id}/kanban")
-async def get_kanban(project_id: str, client: ProjectManagerClient) -> dict:
-    return ServiceClient.data(await client.get(f"/projects/{project_id}/kanban"))
+async def get_kanban(
+    project_id: str, client: ProjectManagerClient, project: str | None = None
+) -> dict:
+    return ServiceClient.data(
+        await client.get(f"/projects/{project_id}/kanban", tenant=_tenant(project))
+    )
 
 
 @router.get("/{project_id}/tasks")
@@ -40,16 +54,24 @@ async def list_tasks(
     client: ProjectManagerClient,
     status: str | None = None,
     assigned_to: str | None = None,
+    project: str | None = None,
 ) -> list:
     raw_params = {"status": status, "assigned_to": assigned_to}
     params = {k: v for k, v in raw_params.items() if v}
-    response = await client.get(f"/projects/{project_id}/tasks", params=params)
+    response = await client.get(
+        f"/projects/{project_id}/tasks", params=params, tenant=_tenant(project)
+    )
     return ServiceClient.data(response)
 
 
 @router.put("/tasks/{task_id}")
 async def update_task_status(
-    task_id: str, body: TaskStatusUpdate, client: ProjectManagerClient
+    task_id: str,
+    body: TaskStatusUpdate,
+    client: ProjectManagerClient,
+    project: str | None = None,
 ) -> dict:
-    response = await client.put(f"/tasks/{task_id}", json={"status": body.status})
+    response = await client.put(
+        f"/tasks/{task_id}", json={"status": body.status}, tenant=_tenant(project)
+    )
     return ServiceClient.data(response)

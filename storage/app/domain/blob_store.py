@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -155,6 +156,18 @@ async def read_range(
 
 def delete(data_dir: Path, tenant: str, bucket: str, key: str, version_id: str) -> None:
     _path_for(data_dir, tenant, bucket, key, version_id).unlink(missing_ok=True)
+
+
+def delete_tenant(data_dir: Path, tenant: str) -> None:
+    """Borra TODOS los bytes de un tenant de un golpe (pedido explícito del
+    usuario: "el admin puede eliminar tenant cargándose todo lo que tiene
+    ese tenant") -- los metadatos (gestor-db) se borran aparte, al soltar
+    el schema entero. `_safe_join` con segmento único (`tenant`, sin "/")
+    es la misma defensa contra ".."/rutas absolutas que ya usa `_dir_for`."""
+    if tenant in ("", ".", "..") or "/" in tenant or "\\" in tenant:
+        raise BadRequest("tenant contiene un segmento de ruta inválido")
+    target = _safe_join(data_dir, tenant)
+    shutil.rmtree(target, ignore_errors=True)
 
 
 def size_of(data_dir: Path, tenant: str, bucket: str, key: str, version_id: str) -> int:

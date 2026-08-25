@@ -57,3 +57,32 @@ async def create_schema(
     except PG_ERRORS as exc:
         raise translate_pg_error(exc) from exc
     return {"schema": schema}
+
+
+@router.delete("/schemas/{schema_name}", status_code=204)
+async def drop_schema(
+    schema_name: str, caller: CallerDep, claims: ClaimsDep, request: Request
+) -> None:
+    """Borra un schema entero, con todo su contenido (DROP ... CASCADE) --
+    pedido explícito del usuario: "el admin puede eliminar tenant
+    cargándose todo lo que tiene ese tenant". resolve_schema ya garantiza
+    que `schema_name` sea el propio tenant del llamante o uno de sus
+    "<tenant>_algo" -- nunca uno ajeno, y nunca "public".
+
+    También limpia sus filas en public.freya_schema_migrations (hallazgo
+    en vivo: esa tabla vive en "public", DROP SCHEMA no la toca -- sin
+    esto, recrear un tenant con el mismo id hace que
+    MigrationRunner/provision_tenant se salten sus migraciones creyendo
+    que ya están aplicadas, dejando el schema nuevo sin sus tablas)."""
+    schema = resolve_schema(caller.tenant, schema_name)
+    try:
+        async with request.app.state.db.acquire() as conn, conn.transaction():
+            await conn.execute(
+                f"DROP SCHEMA IF EXISTS {quote_identifier(schema)} CASCADE"
+            )
+            await conn.execute(
+                "DELETE FROM public.freya_schema_migrations WHERE schema_name = $1",
+                schema,
+            )
+    except PG_ERRORS as exc:
+        raise translate_pg_error(exc) from exc

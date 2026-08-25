@@ -22,7 +22,7 @@ from freya_common import (
     create_app,
 )
 
-from app.api import milestones, projects, sprints, tasks
+from app.api import admin, milestones, projects, sprints, tasks
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -95,6 +95,7 @@ app = create_app(
     readiness_checks={"gestor_db": check_gestor_db, "migrations": check_migrations},
 )
 
+app.include_router(admin.router)
 app.include_router(projects.router)
 app.include_router(tasks.router)
 app.include_router(milestones.router)

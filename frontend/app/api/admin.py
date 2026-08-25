@@ -15,6 +15,9 @@ from app.infra.gateway import client_dep
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 AuthClient = Annotated[ServiceClient, Depends(client_dep("auth"))]
 StorageClient = Annotated[ServiceClient, Depends(client_dep("storage"))]
+GitClient = Annotated[ServiceClient, Depends(client_dep("git"))]
+CicdClient = Annotated[ServiceClient, Depends(client_dep("cicd"))]
+ProjectManagerClient = Annotated[ServiceClient, Depends(client_dep("project-manager"))]
 
 
 class UserCreate(BaseModel):
@@ -101,16 +104,40 @@ async def list_tenants(client: AuthClient) -> list:
 
 @router.post("/tenants", status_code=201)
 async def create_tenant(
-    body: TenantCreate, auth_client: AuthClient, storage_client: StorageClient
+    body: TenantCreate,
+    auth_client: AuthClient,
+    storage_client: StorageClient,
+    git_client: GitClient,
+    cicd_client: CicdClient,
+    pm_client: ProjectManagerClient,
 ) -> dict:
-    """Crea el tenant y aprovisiona su espacio de storage en el mismo paso
+    """Crea el tenant y aprovisiona el schema de cada servicio que lo usa
+    por proyecto (storage, git, cicd, project-manager) en el mismo paso
     (pedido explícito del usuario: automatizar la creación de un tenant,
     sólo aislamiento de datos -- sin desplegar ningún servicio nuevo)."""
     tenant = ServiceClient.data(
         await auth_client.post("/admin/tenants", json=body.model_dump())
     )
     await storage_client.post(f"/storage/admin/tenants/{body.id}/provision")
+    await git_client.post(f"/git/admin/tenants/{body.id}/provision")
+    await cicd_client.post(f"/admin/tenants/{body.id}/provision")
+    await pm_client.post(f"/admin/tenants/{body.id}/provision")
     return tenant
+
+
+@router.delete("/tenants/{tenant_id}", status_code=204)
+async def delete_tenant(
+    tenant_id: str, auth_client: AuthClient, storage_client: StorageClient
+) -> None:
+    """Elimina el tenant: auth se lleva el schema entero (storage, git,
+    cicd y project-manager comparten ese schema -- se van todos sus datos
+    de un golpe) más el registro y los grants; storage limpia aparte los
+    bytes en disco, que viven fuera de Postgres. Pedido explícito del
+    usuario: "el admin puede eliminar tenant cargándose todo lo que tiene
+    ese tenant" -- el aviso de antemano lo muestra el panel antes de
+    llamar aquí."""
+    await auth_client.delete(f"/admin/tenants/{tenant_id}")
+    await storage_client.delete(f"/storage/admin/tenants/{tenant_id}")
 
 
 @router.get("/users/{user_id}/tenants")

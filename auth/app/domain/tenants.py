@@ -26,12 +26,16 @@ from freya_common import (
 # dónde vive la cuenta).
 CONTROL_PLANE_TENANT = "freya"
 
-# Únicos dos servicios que hoy se conceden por proyecto (pedido explícito
-# del usuario). git/cicd/project-manager siguen siendo grants planos
-# (SERVICE_GRANTS en app.domain.users), sin tenant.
+# Todo lo que un admin puede conceder a una cuenta "user" ahora es por
+# proyecto, no global (pedido explícito del usuario: "asimismo con el
+# git, Drive, CI/CD, Proyectos" -- mismo trato que storage/monitoring ya
+# tenían). SERVICE_GRANTS (app.domain.users) queda vacío a propósito.
 TENANT_GRANTABLE_PERMISSIONS: dict[str, list[str]] = {
     "storage": ["read:storage", "write:storage"],
     "monitoring": ["read:monitoring", "write:monitoring"],
+    "git": ["read:git", "write:git"],
+    "cicd": ["read:cicd", "write:cicd"],
+    "project-manager": ["read:project-manager", "write:project-manager"],
 }
 
 _GRANTABLE = {p for perms in TENANT_GRANTABLE_PERMISSIONS.values() for p in perms}
@@ -66,6 +70,40 @@ async def create_tenant(
         data={"id": tenant_id, "name": name, "created_by": created_by},
     )
     return {"id": tenant_id, "name": name}
+
+
+async def delete_tenant(client: ServiceClient, tenant_id: str) -> None:
+    """Borra el tenant de verdad: el schema entero (DROP ... CASCADE en
+    gestor-db -- storage, git, cicd y project-manager comparten un único
+    schema por tenant, así que esto se lleva TODOS sus datos de un golpe),
+    el registro y cualquier grant que alguien tuviera para él. Pedido
+    explícito del usuario: "el admin puede eliminar tenant cargándose todo
+    lo que tiene ese tenant" -- el aviso de antemano es cosa del panel
+    (confirm()), esto ya asume que se confirmó.
+
+    "freya" nunca es borrable por aquí -- es el plano de control (esta
+    misma tabla vive en su schema); borrarlo se llevaría por delante toda
+    la plataforma, no un proyecto."""
+    if tenant_id == CONTROL_PLANE_TENANT:
+        raise BadRequest(f"el tenant '{CONTROL_PLANE_TENANT}' no se puede eliminar")
+    await get_tenant(client, tenant_id)  # 404 si no existe
+
+    await client.request("DELETE", f"/schemas/{tenant_id}", tenant=tenant_id)
+
+    await gdb_mutate(
+        client,
+        CONTROL_PLANE_TENANT,
+        table="user_tenant_grants",
+        action="delete",
+        where={"tenant_id": tenant_id},
+    )
+    await gdb_mutate(
+        client,
+        CONTROL_PLANE_TENANT,
+        table="tenants",
+        action="delete",
+        where={"id": tenant_id},
+    )
 
 
 async def list_tenants(client: ServiceClient) -> list[dict[str, Any]]:

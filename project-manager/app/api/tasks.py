@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
-from freya_common import current_tenant, require_permissions
+from freya_common import current_tenant, require_permissions, require_service_access
 
 from app.deps import ClaimsDep
 from app.domain.commits import link_commit, list_commits_for_task
@@ -18,8 +18,8 @@ router = APIRouter(tags=["tasks"])
 async def create(
     project_id: str, body: TaskCreate, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:project-manager")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:project-manager")
     client = request.app.state.gestor_db
     await get_project(client, tenant, project_id=project_id)
     return await create_task(
@@ -54,10 +54,11 @@ async def list_all(
     milestone_id: str | None = Query(default=None),
     assigned_to: str | None = Query(default=None),
 ) -> list[dict]:
-    require_permissions(claims, "read:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
     return await list_tasks(
         request.app.state.gestor_db,
-        current_tenant(),
+        tenant,
         project_id=project_id,
         status=status,
         sprint_id=sprint_id,
@@ -68,21 +69,21 @@ async def list_all(
 
 @router.get("/tasks/{task_id}")
 async def get(task_id: str, claims: ClaimsDep, request: Request) -> dict:
-    require_permissions(claims, "read:project-manager")
-    return await get_task(
-        request.app.state.gestor_db, current_tenant(), task_id=task_id
-    )
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
+    return await get_task(request.app.state.gestor_db, tenant, task_id=task_id)
 
 
 @router.put("/tasks/{task_id}")
 async def update(
     task_id: str, body: TaskUpdate, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "write:project-manager")
     completed_by = str(claims.get("sub") or claims.get("service") or "")
     return await update_task(
         request.app.state.gestor_db,
-        current_tenant(),
+        tenant,
         task_id=task_id,
         status=body.status,
         priority=body.priority,
@@ -95,6 +96,8 @@ async def update(
 
 @router.delete("/tasks/{task_id}", status_code=204)
 async def remove(task_id: str, claims: ClaimsDep, request: Request) -> None:
+    # admin:project-manager sigue siendo un permiso plano de rol, mismo
+    # criterio que borrar un proyecto entero (ver projects.py:remove).
     require_permissions(claims, "admin:project-manager")
     await delete_task(request.app.state.gestor_db, current_tenant(), task_id=task_id)
 
@@ -103,8 +106,8 @@ async def remove(task_id: str, claims: ClaimsDep, request: Request) -> None:
 async def link_commit_route(
     task_id: str, body: CommitLink, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:project-manager")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:project-manager")
     client = request.app.state.gestor_db
     await get_task(client, tenant, task_id=task_id)
     return await link_commit(
@@ -120,7 +123,8 @@ async def link_commit_route(
 async def commits_route(
     task_id: str, claims: ClaimsDep, request: Request
 ) -> list[dict]:
-    require_permissions(claims, "read:project-manager")
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:project-manager")
     return await list_commits_for_task(
-        request.app.state.gestor_db, current_tenant(), task_id=task_id
+        request.app.state.gestor_db, tenant, task_id=task_id
     )

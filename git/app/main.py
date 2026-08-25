@@ -23,7 +23,7 @@ from freya_common import (
     create_app,
 )
 
-from app.api import repos, smart_http
+from app.api import admin, repos, smart_http
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -119,5 +119,6 @@ app = create_app(
     },
 )
 
+app.include_router(admin.router)
 app.include_router(repos.router)
 app.include_router(smart_http.router)

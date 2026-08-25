@@ -1,7 +1,9 @@
-"""Modelo de permisos de app/domain/users.py, sin red ni base. storage y
-monitoring ya NO se conceden aquí de forma global (pedido explícito del
-usuario: se conceden por proyecto/tenant -- ver test_tenants.py); sólo
-git/cicd/project-manager siguen siendo grants planos."""
+"""Modelo de permisos de app/domain/users.py, sin red ni base. storage,
+monitoring, git, cicd y project-manager ya NO se conceden aquí de forma
+global (pedido explícito del usuario: "asimismo con el git, Drive, CI/CD,
+Proyectos") -- todos se conceden por proyecto/tenant, ver test_tenants.py.
+SERVICE_GRANTS queda vacío a propósito, el mecanismo se conserva por si
+algún futuro acceso realmente necesitara ser global."""
 
 from __future__ import annotations
 
@@ -24,49 +26,47 @@ def test_user_no_tiene_storage_por_defecto() -> None:
     assert "write:storage" not in perms
 
 
-def test_admin_si_tiene_storage_por_defecto() -> None:
-    # El admin sigue sin estar acotado por tenant (pedido explícito del
-    # usuario: "admin sólo tiene vista global de Freya", ver
-    # app.domain.tenants.py) -- su acceso a storage/monitoring sigue plano.
+def test_admin_si_tiene_todo_por_defecto() -> None:
+    # El admin sigue sin estar acotado por tenant para storage/monitoring
+    # (pedido explícito del usuario: "admin sólo tiene vista global de
+    # Freya" es la única restricción, aplicada en runtime -- ver
+    # storage/app/deps.py y gestor-monitoring/app/api/monitoring.py, no
+    # aquí) -- su acceso plano de siempre sigue intacto para los 5
+    # servicios que ahora son por-proyecto para una cuenta "user".
     perms = permissions_for_role("admin")
-    assert "read:storage" in perms
-    assert "write:storage" in perms
-    assert "read:monitoring" in perms
-    assert "write:monitoring" in perms
+    for p in (
+        "read:storage", "write:storage", "read:monitoring", "write:monitoring",
+        "read:git", "write:git", "read:cicd", "write:cicd",
+        "read:project-manager", "write:project-manager",
+    ):
+        assert p in perms
 
 
-def test_storage_y_monitoring_ya_no_son_grants_planos() -> None:
-    assert "storage" not in SERVICE_GRANTS
-    assert "monitoring" not in SERVICE_GRANTS
-
-
-def test_git_cicd_project_manager_siguen_siendo_grants_planos() -> None:
-    assert set(SERVICE_GRANTS) == {"git", "cicd", "project-manager"}
+def test_service_grants_queda_vacio() -> None:
+    # storage/monitoring/git/cicd/project-manager se movieron todos a
+    # TENANT_GRANTABLE_PERMISSIONS (app.domain.tenants) -- no queda nada
+    # que conceder de forma global hoy.
+    assert SERVICE_GRANTS == {}
 
 
 def test_full_permissions_filtra_extra_permissions_no_concedibles() -> None:
     # Hallazgo de una revisión de seguridad: storage/monitoring vivían en
-    # extra_permissions antes de pasar a ser por-tenant. Si una fila vieja
-    # de la base conservara uno de esos permisos, full_permissions() ya no
-    # debe reflejarlo en el JWT -- si no, esa cuenta tendría acceso plano a
-    # TODOS los tenants, no sólo a los concedidos en user_tenant_grants.
-    perms = full_permissions("user", ["read:storage", "write:storage", "read:git"])
+    # extra_permissions antes de pasar a ser por-tenant (y ahora también
+    # git/cicd/project-manager). Si una fila vieja de la base conservara
+    # uno de esos permisos, full_permissions() ya no debe reflejarlo en el
+    # JWT -- si no, esa cuenta tendría acceso plano a TODOS los tenants,
+    # no sólo a los concedidos en user_tenant_grants.
+    perms = full_permissions("user", ["read:storage", "write:git", "read:self"])
     assert "read:storage" not in perms
-    assert "write:storage" not in perms
-    assert "read:git" in perms
+    assert "write:git" not in perms
+    assert "read:self" in perms
 
 
-def test_validate_extra_permissions_ya_no_acepta_storage() -> None:
-    # Antes esto pasaba (storage era un grant plano); ahora storage vive en
-    # user_tenant_grants, no en extra_permissions.
+def test_validate_extra_permissions_no_acepta_nada_ya() -> None:
+    # Con SERVICE_GRANTS vacío, ningún permiso de servicio es concedible
+    # de forma global -- todo pasa por user_tenant_grants ahora.
     with pytest.raises(FreyaError) as exc_info:
-        _validate_extra_permissions(["read:storage", "write:storage"])
-    assert exc_info.value.status_code == 400
-
-
-def test_validate_extra_permissions_rechaza_lo_no_concedible() -> None:
-    with pytest.raises(FreyaError) as exc_info:
-        _validate_extra_permissions(["admin:users"])
+        _validate_extra_permissions(["read:git"])
     assert exc_info.value.status_code == 400
 
 

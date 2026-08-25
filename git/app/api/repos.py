@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
-from freya_common import current_tenant, require_permissions
+from freya_common import current_tenant, require_permissions, require_service_access
 
 from app.deps import ClaimsDep
 from app.domain import history, repo_store
@@ -27,9 +27,9 @@ async def _materialized(request: Request, repo: dict, tenant: str):
 
 @router.post("", status_code=201)
 async def create(body: RepoCreate, claims: ClaimsDep, request: Request) -> dict:
-    require_permissions(claims, "write:git")
-    validate_repo_name(body.repo_name)
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:git")
+    validate_repo_name(body.repo_name)
     client = request.app.state.gestor_db
     await repo_store.ensure_bucket(request.app.state.storage, tenant)
     repo = await create_repo(
@@ -54,16 +54,16 @@ async def create(body: RepoCreate, claims: ClaimsDep, request: Request) -> dict:
 
 @router.get("")
 async def list_all(claims: ClaimsDep, request: Request) -> list[dict]:
-    require_permissions(claims, "read:git")
-    return await list_repos(request.app.state.gestor_db, current_tenant())
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:git")
+    return await list_repos(request.app.state.gestor_db, tenant)
 
 
 @router.get("/{repo_id}")
 async def get(repo_id: str, claims: ClaimsDep, request: Request) -> dict:
-    require_permissions(claims, "read:git")
-    return await get_repo(
-        request.app.state.gestor_db, current_tenant(), repo_id=repo_id
-    )
+    tenant = current_tenant()
+    require_service_access(claims, tenant, "read:git")
+    return await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
 
 
 @router.delete("/{repo_id}", status_code=204)
@@ -79,8 +79,8 @@ async def remove(repo_id: str, claims: ClaimsDep, request: Request) -> None:
 
 @router.get("/{repo_id}/branches")
 async def branches(repo_id: str, claims: ClaimsDep, request: Request) -> list[dict]:
-    require_permissions(claims, "read:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "read:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
@@ -93,8 +93,8 @@ async def branches(repo_id: str, claims: ClaimsDep, request: Request) -> list[di
 async def create_branch_route(
     repo_id: str, body: BranchCreate, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
@@ -113,8 +113,8 @@ async def create_branch_route(
 async def delete_branch_route(
     repo_id: str, branch: str, claims: ClaimsDep, request: Request
 ) -> None:
-    require_permissions(claims, "write:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
@@ -130,8 +130,8 @@ async def delete_branch_route(
 
 @router.get("/{repo_id}/tags")
 async def tags(repo_id: str, claims: ClaimsDep, request: Request) -> list[dict]:
-    require_permissions(claims, "read:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "read:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
@@ -144,9 +144,9 @@ async def tags(repo_id: str, claims: ClaimsDep, request: Request) -> list[dict]:
 async def create_tag_route(
     repo_id: str, body: TagCreate, claims: ClaimsDep, request: Request
 ) -> dict:
-    require_permissions(claims, "write:git")
-    history.validate_tag_name(body.name)
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:git")
+    history.validate_tag_name(body.name)
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
@@ -170,8 +170,8 @@ async def create_tag_route(
 async def delete_tag_route(
     repo_id: str, tag: str, claims: ClaimsDep, request: Request
 ) -> None:
-    require_permissions(claims, "write:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "write:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
@@ -195,8 +195,8 @@ async def commits(
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
 ) -> dict:
-    require_permissions(claims, "read:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "read:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     offset = int(cursor) if cursor and cursor.isdigit() else 0
     workdir = await _materialized(request, repo, tenant)
@@ -225,8 +225,8 @@ async def diff_route(
     head: str = Query(...),
     path: str | None = Query(default=None),
 ) -> dict:
-    require_permissions(claims, "read:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "read:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:
@@ -245,8 +245,8 @@ async def tree_route(
 ) -> list[dict]:
     """No forma parte de docs/freya-api-contract.md §6 todavía, pero
     ROADMAP.md (tarea git-04) exige árbol de ficheros navegable por API."""
-    require_permissions(claims, "read:git")
     tenant = current_tenant()
+    require_service_access(claims, tenant, "read:git")
     repo = await get_repo(request.app.state.gestor_db, tenant, repo_id=repo_id)
     workdir = await _materialized(request, repo, tenant)
     try:

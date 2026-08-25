@@ -241,14 +241,37 @@ async def delete_object(
     bucket: str,
     key: str,
     version_id: str | None,
+    deleted_by: str | None,
 ) -> None:
+    """Borrado "normal" (botón Borrar del panel): si es el objeto entero
+    (version_id=None) y lo borra una persona (deleted_by dado), va a su
+    papelera -- pedido explícito del usuario, "storage debe tener papelera
+    por usuario". No toca bytes ni versiones, sólo marca
+    deleted_at/deleted_by; el borrado real e irreversible vive en
+    purge_object, sólo alcanzable desde la papelera.
+
+    deleted_by=None es el borrado inmediato de siempre -- para llamadas de
+    servicio (sin "sub" en el token, ej. git limpiando su propio bucket
+    interno), donde no hay ninguna persona dueña de una papelera que lo
+    recupere. Borrar una versión antigua concreta (version_id dado) sigue
+    siendo inmediato para cualquier llamante -- no hay vista de historial
+    de versiones en el panel hoy que necesite recuperarlas."""
     row = await _object_row(client, tenant, bucket=bucket, key=key)
     if row is None:
         raise NotFound(
             f"'{key}' no existe en '{bucket}'", details={"bucket": bucket, "key": key}
         )
 
-    if version_id is None:
+    if version_id is None and deleted_by is not None:
+        await gdb_mutate(
+            client,
+            tenant,
+            table="storage_objects",
+            action="update",
+            where={"id": row["id"]},
+            data={"deleted_at": _now(), "deleted_by": deleted_by},
+        )
+    elif version_id is None:
         versions = await _query_all(
             client,
             tenant,
@@ -269,9 +292,8 @@ async def delete_object(
             client,
             tenant,
             table="storage_objects",
-            action="update",
+            action="delete",
             where={"id": row["id"]},
-            data={"deleted_at": _now()},
         )
     else:
         blob_store.delete(data_dir, tenant, bucket, key, version_id)
@@ -291,6 +313,147 @@ async def delete_object(
                 where={"id": row["id"]},
                 data={"current_version_id": None},
             )
+
+
+async def _trashed_row_for(
+    client: ServiceClient, tenant: str, *, bucket: str, object_id: str, deleted_by: str
+) -> dict[str, Any] | None:
+    rows = await gdb_query(
+        client,
+        tenant,
+        table="storage_objects",
+        select=["id", "key", "current_version_id"],
+        where={
+            "id": object_id,
+            "bucket": bucket,
+            "deleted_by": deleted_by,
+            "deleted_at": {"is_null": False},
+        },
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+async def list_trash(
+    client: ServiceClient,
+    tenant: str,
+    *,
+    bucket: str,
+    deleted_by: str,
+    prefix: str | None,
+    limit: int,
+    offset: int,
+) -> list[dict[str, Any]]:
+    where: dict[str, Any] = {
+        "bucket": bucket, "deleted_by": deleted_by, "deleted_at": {"is_null": False},
+    }
+    if prefix:
+        where["key"] = {"like": f"{prefix}%"}
+    objects = await gdb_query(
+        client,
+        tenant,
+        table="storage_objects",
+        select=["id", "key", "current_version_id", "deleted_at"],
+        where=where,
+        order_by=[{"field": "deleted_at", "direction": "desc"}],
+        limit=limit,
+        offset=offset,
+    )
+    result = []
+    for obj in objects:
+        size = None
+        if obj["current_version_id"]:
+            versions = await gdb_query(
+                client,
+                tenant,
+                table="storage_versions",
+                select=["size"],
+                where={"id": obj["current_version_id"]},
+                limit=1,
+            )
+            size = versions[0]["size"] if versions else None
+        result.append(
+            {
+                "id": obj["id"],
+                "key": obj["key"],
+                "size": size,
+                "deleted_at": obj["deleted_at"],
+            }
+        )
+    return result
+
+
+async def restore_object(
+    client: ServiceClient, tenant: str, *, bucket: str, object_id: str, user_id: str
+) -> dict[str, Any]:
+    row = await _trashed_row_for(
+        client, tenant, bucket=bucket, object_id=object_id, deleted_by=user_id
+    )
+    if row is None:
+        raise NotFound(
+            "objeto no encontrado en tu papelera",
+            details={"bucket": bucket, "id": object_id},
+        )
+    live = await _object_row(client, tenant, bucket=bucket, key=row["key"])
+    if live is not None:
+        raise Conflict(
+            f"ya existe un objeto en '{row['key']}' -- bórralo o renómbralo "
+            "antes de restaurar",
+            details={"bucket": bucket, "key": row["key"]},
+        )
+    await gdb_mutate(
+        client,
+        tenant,
+        table="storage_objects",
+        action="update",
+        where={"id": object_id},
+        data={"deleted_at": None, "deleted_by": None},
+    )
+    return {"bucket": bucket, "key": row["key"]}
+
+
+async def purge_object(
+    client: ServiceClient,
+    tenant: str,
+    data_dir: Path,
+    *,
+    bucket: str,
+    object_id: str,
+    user_id: str,
+) -> None:
+    """Borrado real e irreversible -- sólo alcanzable desde la papelera del
+    propio usuario (deleted_by=user_id), nunca de la de otro."""
+    row = await _trashed_row_for(
+        client, tenant, bucket=bucket, object_id=object_id, deleted_by=user_id
+    )
+    if row is None:
+        raise NotFound(
+            "objeto no encontrado en tu papelera",
+            details={"bucket": bucket, "id": object_id},
+        )
+    versions = await _query_all(
+        client,
+        tenant,
+        table="storage_versions",
+        select=["id"],
+        where={"object_id": row["id"]},
+    )
+    for version in versions:
+        blob_store.delete(data_dir, tenant, bucket, row["key"], version["id"])
+    await gdb_mutate(
+        client,
+        tenant,
+        table="storage_versions",
+        action="delete",
+        where={"object_id": row["id"]},
+    )
+    await gdb_mutate(
+        client,
+        tenant,
+        table="storage_objects",
+        action="delete",
+        where={"id": row["id"]},
+    )
 
 
 async def list_objects(

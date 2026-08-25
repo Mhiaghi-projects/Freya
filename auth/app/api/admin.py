@@ -19,6 +19,7 @@ from app.domain.accounts import (
 from app.domain.tenants import (
     TENANT_GRANTABLE_PERMISSIONS,
     create_tenant,
+    delete_tenant,
     list_tenants,
     set_tenant_grant,
     tenant_grants_of,
@@ -156,6 +157,13 @@ async def create_admin_tenant(
         name=body.name,
         created_by=admin.get("sub"),
     )
+
+
+@router.delete("/admin/tenants/{tenant_id}", status_code=204)
+async def delete_admin_tenant(
+    tenant_id: str, _admin: AdminDep, request: Request
+) -> None:
+    await delete_tenant(request.app.state.gestor_db, tenant_id)
 
 
 @router.get("/admin/users/{user_id}/tenants")

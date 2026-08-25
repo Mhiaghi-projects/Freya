@@ -1,9 +1,10 @@
 """Objetos (docs/freya-api-contract.md §5.1-5.6).
 
-"/versions" se registra antes que la ruta genérica de objeto: {key:path}
-consume el resto de la URL incluidas barras, así que si el orden fuera al
-revés, "/storage/b/foo/versions" se leería como key="foo/versions" en vez
-de resolver al listado de versiones de "foo".
+"/trash" y "/versions" se registran antes que la ruta genérica de objeto:
+{key:path} consume el resto de la URL incluidas barras, así que si el
+orden fuera al revés, "/storage/b/trash" o "/storage/b/foo/versions" se
+leerían como key="trash" o key="foo/versions" en vez de resolver a sus
+rutas propias.
 """
 
 from __future__ import annotations
@@ -27,8 +28,11 @@ from app.domain.objects import (
     delete_object,
     get_object_metadata,
     list_objects,
+    list_trash,
     list_versions,
+    purge_object,
     put_object,
+    restore_object,
 )
 
 router = APIRouter(tags=["objects"])
@@ -115,6 +119,74 @@ def _decode_metadata(header_value: str | None) -> str:
     except binascii.Error as exc:
         raise BadRequest("X-Object-Metadata no es base64 válido") from exc
     return header_value
+
+
+def _require_owner(claims: dict) -> str:
+    """La papelera es por persona (pedido explícito del usuario) -- no
+    tiene sentido para un token de servicio, que no tiene "sub"."""
+    user_id = claims.get("sub")
+    if not user_id or claims.get("service"):
+        raise Forbidden("La papelera es sólo para cuentas de usuario")
+    return user_id
+
+
+@router.get("/storage/{bucket}/trash")
+async def trash(
+    bucket: str,
+    claims: ClaimsDep,
+    request: Request,
+    prefix: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None),
+) -> dict:
+    tenant = current_tenant()
+    require_storage_access(claims, tenant, "read:storage")
+    user_id = _require_owner(claims)
+    offset = int(cursor) if cursor and cursor.isdigit() else 0
+    objects = await list_trash(
+        request.app.state.gestor_db,
+        tenant,
+        bucket=bucket,
+        deleted_by=user_id,
+        prefix=prefix,
+        limit=limit,
+        offset=offset,
+    )
+    next_cursor = str(offset + limit) if len(objects) == limit else None
+    return {"bucket": bucket, "objects": objects, "next_cursor": next_cursor}
+
+
+@router.post("/storage/{bucket}/trash/{object_id}/restore", status_code=200)
+async def trash_restore(
+    bucket: str, object_id: str, claims: ClaimsDep, request: Request
+) -> dict:
+    tenant = current_tenant()
+    require_storage_access(claims, tenant, "write:storage")
+    user_id = _require_owner(claims)
+    return await restore_object(
+        request.app.state.gestor_db,
+        tenant,
+        bucket=bucket,
+        object_id=object_id,
+        user_id=user_id,
+    )
+
+
+@router.delete("/storage/{bucket}/trash/{object_id}", status_code=204)
+async def trash_purge(
+    bucket: str, object_id: str, claims: ClaimsDep, request: Request
+) -> None:
+    tenant = current_tenant()
+    require_storage_access(claims, tenant, "write:storage")
+    user_id = _require_owner(claims)
+    await purge_object(
+        request.app.state.gestor_db,
+        tenant,
+        request.app.state.settings.data_dir,
+        bucket=bucket,
+        object_id=object_id,
+        user_id=user_id,
+    )
 
 
 @router.get("/storage/{bucket}/{key:path}/versions")
@@ -283,6 +355,7 @@ async def remove(
         bucket=bucket,
         key=key,
         version_id=versionId,
+        deleted_by=claims.get("sub"),
     )
 
 

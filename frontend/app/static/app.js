@@ -192,58 +192,75 @@ function renderServiceGrid(content, services) {
   if (!services.length) content.appendChild(el("p", { class: "empty" }, "Sin servicios en este proyecto."));
 }
 
-function monitoringGrantedTenants() {
+function grantedTenantsFor(service) {
   return Object.entries(currentUser.tenant_grants || {})
-    .filter(([, perms]) => perms.includes("read:monitoring"))
+    .filter(([, perms]) => perms.includes(`read:${service}`))
     .map(([t]) => t);
 }
 
-route("dashboard", async (content) => {
-  content.appendChild(el("h2", { class: "page-title" }, "Panel"));
+function monitoringGrantedTenants() {
+  return grantedTenantsFor("monitoring");
+}
 
-  // El admin conserva la vista global de siempre, sin selector de proyecto
-  // (pedido explícito del usuario: "admin sólo tiene vista global de
-  // Freya").
+function renderTenantPicker(content, { title, tenants, hashBase, emptyHint }) {
+  content.appendChild(el("h2", { class: "page-title" }, title));
+  if (!tenants.length) {
+    content.appendChild(el("p", { class: "empty" }, emptyHint));
+    return;
+  }
+  const grid = el("div", { class: "grid" });
+  for (const t of tenants) {
+    grid.appendChild(el("div", { class: "card clickable", onclick: () => { location.hash = `${hashBase}/${encodeURIComponent(t)}`; } },
+      el("h3", {}, `📁 ${t}`), el("p", { class: "muted" }, "Elegir este proyecto")));
+  }
+  content.appendChild(grid);
+}
+
+// El admin conserva la vista global de siempre, sin selector de proyecto
+// (pedido explícito del usuario: "admin sólo tiene vista global de
+// Freya"); una cuenta "user" siempre elige el proyecto primero -- entrar
+// al Panel muestra los proyectos, no sus servicios directamente (pedido
+// explícito del usuario).
+route("dashboard", async (content, [project]) => {
   if (currentUser.role === "admin") {
+    content.appendChild(el("h2", { class: "page-title" }, "Panel"));
     const data = await api("GET", "/api/catalog");
     renderServiceGrid(content, data.services);
     return;
   }
 
   const grantedTenants = monitoringGrantedTenants();
-  if (!grantedTenants.length) {
-    content.appendChild(el("p", { class: "empty" }, "No tienes acceso al monitoreo de ningún proyecto todavía. Pide a un administrador que te dé acceso."));
+  if (!project) {
+    renderTenantPicker(content, {
+      title: "Panel", tenants: grantedTenants, hashBase: "#/dashboard",
+      emptyHint: "No tienes acceso al monitoreo de ningún proyecto todavía. Pide a un administrador que te dé acceso.",
+    });
     return;
   }
 
-  const gridWrap = el("div", {});
-  async function loadProject(project) {
-    gridWrap.innerHTML = "";
-    const data = await api("GET", `/api/catalog?project=${encodeURIComponent(project)}`);
-    renderServiceGrid(gridWrap, data.services);
+  const decodedProject = decodeURIComponent(project);
+  if (!grantedTenants.includes(decodedProject)) {
+    content.appendChild(el("p", { class: "error" }, "No tienes acceso al monitoreo de ese proyecto."));
+    return;
   }
-
-  if (grantedTenants.length > 1) {
-    const select = el("select", { id: "dash-project" }, grantedTenants.map((t) => el("option", { value: t }, t)));
-    select.addEventListener("change", () => loadProject(select.value));
-    content.appendChild(el("div", { class: "inline-form" },
-      el("label", { class: "muted" }, "Proyecto: ", select)));
-  }
-
-  content.appendChild(gridWrap);
-  await loadProject(grantedTenants[0]);
+  content.appendChild(el("div", { class: "breadcrumb" },
+    el("a", { onclick: () => { location.hash = "#/dashboard"; } }, "Panel"), ` / ${decodedProject}`));
+  content.appendChild(el("h2", { class: "page-title" }, decodedProject));
+  const data = await api("GET", `/api/catalog?project=${encodeURIComponent(decodedProject)}`);
+  renderServiceGrid(content, data.services);
 });
 
 // --- git ------------------------------------------------------------
-route("git", async (content, [repoId]) => {
+async function renderGitPanel(content, { tenant, repoId, hashBase }) {
+  const q = `?project=${encodeURIComponent(tenant)}`;
   if (!repoId) {
     content.appendChild(el("h2", { class: "page-title" }, "Git"));
-    const repos = await api("GET", "/api/git/repos");
+    const repos = await api("GET", `/api/git/repos${q}`);
     if (!repos.length) { content.appendChild(el("p", { class: "empty" }, "Sin repositorios.")); return; }
     const table = el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "Repositorio"), el("th", {}, "Rama por defecto"), el("th", {}, "Visibilidad"))),
       el("tbody", {}, repos.map((r) =>
-        el("tr", { class: "clickable", onclick: () => { location.hash = `#/git/${r.id}`; } },
+        el("tr", { class: "clickable", onclick: () => { location.hash = `${hashBase}/${r.id}`; } },
           el("td", {}, r.repo_name), el("td", {}, r.default_branch), el("td", {}, r.visibility))
       ))
     );
@@ -252,11 +269,11 @@ route("git", async (content, [repoId]) => {
   }
 
   const [repo, branches, commits] = await Promise.all([
-    api("GET", `/api/git/repos/${repoId}`),
-    api("GET", `/api/git/repos/${repoId}/branches`),
-    api("GET", `/api/git/repos/${repoId}/commits`),
+    api("GET", `/api/git/repos/${repoId}${q}`),
+    api("GET", `/api/git/repos/${repoId}/branches${q}`),
+    api("GET", `/api/git/repos/${repoId}/commits${q}`),
   ]);
-  content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = "#/git"; } }, "Git"), ` / ${repo.repo_name}`));
+  content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = hashBase; } }, "Git"), ` / ${repo.repo_name}`));
   content.appendChild(el("h2", { class: "page-title" }, repo.repo_name));
 
   content.appendChild(el("h3", {}, "Ramas"));
@@ -278,6 +295,28 @@ route("git", async (content, [repoId]) => {
       ))
     ));
   }
+}
+
+route("git", async (content, pathParts) => {
+  if (currentUser.role === "admin") {
+    await renderGitPanel(content, { tenant: "freya", repoId: pathParts[0], hashBase: "#/git" });
+    return;
+  }
+  const grantedTenants = grantedTenantsFor("git");
+  const [tenant, repoId] = pathParts;
+  if (!tenant) {
+    renderTenantPicker(content, {
+      title: "Git", tenants: grantedTenants, hashBase: "#/git",
+      emptyHint: "No tienes acceso a git de ningún proyecto todavía. Pide a un administrador que te dé acceso.",
+    });
+    return;
+  }
+  const decodedTenant = decodeURIComponent(tenant);
+  if (!grantedTenants.includes(decodedTenant)) {
+    content.appendChild(el("p", { class: "error" }, "No tienes acceso a git de ese proyecto."));
+    return;
+  }
+  await renderGitPanel(content, { tenant: decodedTenant, repoId, hashBase: `#/git/${tenant}` });
 });
 
 // --- storage (Mi Drive / proyectos) --------------------------------------
@@ -362,7 +401,8 @@ async function renderDriveBrowser(content, { bucket, tenant, decodedParts, prefi
   const downloadSelectedBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Descargar seleccionados");
   const deleteSelectedBtn = el("button", { class: "btn btn-danger", type: "button" }, "Eliminar seleccionados");
   const treeBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Ver árbol de directorios");
-  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm, selectAllBtn, downloadSelectedBtn, deleteSelectedBtn, treeBtn));
+  const trashBtn = el("button", { class: "btn btn-secondary", type: "button" }, "Papelera");
+  content.appendChild(el("div", { class: "toolbar" }, folderForm, uploadForm, selectAllBtn, downloadSelectedBtn, deleteSelectedBtn, treeBtn, trashBtn));
 
   const progressLabel = el("span", { class: "muted" });
   const progressBar = el("progress", { max: "100", value: "0" });
@@ -371,6 +411,9 @@ async function renderDriveBrowser(content, { bucket, tenant, decodedParts, prefi
 
   const treeWrap = el("div", { class: "hidden" });
   content.appendChild(treeWrap);
+
+  const trashWrap = el("div", { class: "hidden" });
+  content.appendChild(trashWrap);
 
   const toolbarError = el("p", { class: "error hidden" });
   content.appendChild(toolbarError);
@@ -481,6 +524,8 @@ async function renderDriveBrowser(content, { bucket, tenant, decodedParts, prefi
 
   treeBtn.addEventListener("click", async () => {
     toolbarError.classList.add("hidden");
+    trashWrap.classList.add("hidden");
+    trashWrap.innerHTML = "";
     if (!treeWrap.classList.contains("hidden")) {
       treeWrap.classList.add("hidden");
       treeWrap.innerHTML = "";
@@ -493,6 +538,59 @@ async function renderDriveBrowser(content, { bucket, tenant, decodedParts, prefi
         ? renderDirTree(res.tree)
         : el("p", { class: "empty" }, "Carpeta vacía."));
       treeWrap.classList.remove("hidden");
+    } catch (err) { showError(err); }
+  });
+
+  async function loadTrash() {
+    const res = await api("GET", `/api/storage/${bucket}/trash?project=${encodeURIComponent(tenant)}`);
+    trashWrap.innerHTML = "";
+    if (!res.objects.length) {
+      trashWrap.appendChild(el("p", { class: "empty" }, "La papelera está vacía."));
+      return;
+    }
+    const trashTable = el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "Nombre"), el("th", {}, "Tamaño"), el("th", {}, "Borrado"), el("th", {}, ""))),
+      el("tbody", {}, res.objects.map((o) => el("tr", {},
+        el("td", {}, `📄 ${o.key}`), el("td", {}, String(o.size ?? "")), el("td", {}, o.deleted_at || ""),
+        el("td", {},
+          el("button", {
+            class: "btn btn-secondary", type: "button",
+            onclick: async () => {
+              try {
+                await api("POST", `/api/storage/${bucket}/trash/${o.id}/restore?project=${encodeURIComponent(tenant)}`);
+                await loadTrash();
+                await load();
+              } catch (err) { showError(err); }
+            },
+          }, "Restaurar"),
+          el("button", {
+            class: "btn btn-danger", type: "button",
+            onclick: async () => {
+              if (!confirm(`¿Eliminar '${o.key}' para siempre? No se puede deshacer.`)) return;
+              try {
+                await api("DELETE", `/api/storage/${bucket}/trash/${o.id}?project=${encodeURIComponent(tenant)}`);
+                await loadTrash();
+              } catch (err) { showError(err); }
+            },
+          }, "Eliminar para siempre"),
+        ),
+      ))),
+    );
+    trashWrap.appendChild(trashTable);
+  }
+
+  trashBtn.addEventListener("click", async () => {
+    toolbarError.classList.add("hidden");
+    treeWrap.classList.add("hidden");
+    treeWrap.innerHTML = "";
+    if (!trashWrap.classList.contains("hidden")) {
+      trashWrap.classList.add("hidden");
+      trashWrap.innerHTML = "";
+      return;
+    }
+    try {
+      await loadTrash();
+      trashWrap.classList.remove("hidden");
     } catch (err) { showError(err); }
   });
 
@@ -552,9 +650,7 @@ async function renderDriveBrowser(content, { bucket, tenant, decodedParts, prefi
 }
 
 function storageGrantedTenants() {
-  return Object.entries(currentUser.tenant_grants || {})
-    .filter(([, perms]) => perms.includes("read:storage"))
-    .map(([t]) => t);
+  return grantedTenantsFor("storage");
 }
 
 route("storage", async (content, pathParts) => {
@@ -630,14 +726,15 @@ route("storage", async (content, pathParts) => {
 });
 
 // --- cicd ------------------------------------------------------------
-route("cicd", async (content, [pipelineId]) => {
+async function renderCicdPanel(content, { tenant, pipelineId, hashBase }) {
+  const q = `?project=${encodeURIComponent(tenant)}`;
   if (!pipelineId) {
     content.appendChild(el("h2", { class: "page-title" }, "CI/CD"));
-    const pipelines = await api("GET", "/api/cicd/pipelines");
+    const pipelines = await api("GET", `/api/cicd/pipelines${q}`);
     content.appendChild(el("table", {},
       el("thead", {}, el("tr", {}, el("th", {}, "Pipeline"), el("th", {}, "Servicio"), el("th", {}, "Tipo"))),
       el("tbody", {}, pipelines.map((p) =>
-        el("tr", { class: "clickable", onclick: () => { location.hash = `#/cicd/${p.id}`; } },
+        el("tr", { class: "clickable", onclick: () => { location.hash = `${hashBase}/${p.id}`; } },
           el("td", {}, p.name), el("td", {}, p.service), el("td", {}, p.pipeline_type))
       ))
     ));
@@ -645,7 +742,7 @@ route("cicd", async (content, [pipelineId]) => {
   }
 
   async function renderRuns() {
-    const runs = await api("GET", `/api/cicd/pipelines/${pipelineId}/runs`);
+    const runs = await api("GET", `/api/cicd/pipelines/${pipelineId}/runs${q}`);
     const body = document.getElementById("runs-body");
     body.innerHTML = "";
     for (const r of runs) {
@@ -656,12 +753,12 @@ route("cicd", async (content, [pipelineId]) => {
   }
   function badgeCell(status) { return el("td", {}, badge(status)); }
 
-  content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = "#/cicd"; } }, "CI/CD"), ` / ${pipelineId}`));
+  content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = hashBase; } }, "CI/CD"), ` / ${pipelineId}`));
   const toolbar = el("div", { class: "toolbar" },
     el("h2", { class: "page-title", style: "margin:0" }, "Runs"),
     el("button", { class: "btn", onclick: async (e) => {
       e.target.disabled = true;
-      try { await api("POST", `/api/cicd/pipelines/${pipelineId}/trigger`); await renderRuns(); }
+      try { await api("POST", `/api/cicd/pipelines/${pipelineId}/trigger${q}`); await renderRuns(); }
       finally { e.target.disabled = false; }
     } }, "Disparar pipeline")
   );
@@ -671,22 +768,45 @@ route("cicd", async (content, [pipelineId]) => {
     el("tbody", { id: "runs-body" })
   ));
   await renderRuns();
+}
+
+route("cicd", async (content, pathParts) => {
+  if (currentUser.role === "admin") {
+    await renderCicdPanel(content, { tenant: "freya", pipelineId: pathParts[0], hashBase: "#/cicd" });
+    return;
+  }
+  const grantedTenants = grantedTenantsFor("cicd");
+  const [tenant, pipelineId] = pathParts;
+  if (!tenant) {
+    renderTenantPicker(content, {
+      title: "CI/CD", tenants: grantedTenants, hashBase: "#/cicd",
+      emptyHint: "No tienes acceso al CI/CD de ningún proyecto todavía. Pide a un administrador que te dé acceso.",
+    });
+    return;
+  }
+  const decodedTenant = decodeURIComponent(tenant);
+  if (!grantedTenants.includes(decodedTenant)) {
+    content.appendChild(el("p", { class: "error" }, "No tienes acceso al CI/CD de ese proyecto."));
+    return;
+  }
+  await renderCicdPanel(content, { tenant: decodedTenant, pipelineId, hashBase: `#/cicd/${tenant}` });
 });
 
 // --- projects ------------------------------------------------------------
-route("projects", async (content, [projectId]) => {
+async function renderProjectsPanel(content, { tenant, projectId, hashBase }) {
+  const q = `?project=${encodeURIComponent(tenant)}`;
   if (!projectId) {
     content.appendChild(el("h2", { class: "page-title" }, "Proyectos"));
-    const projects = await api("GET", "/api/projects");
+    const projects = await api("GET", `/api/projects${q}`);
     if (!projects.length) { content.appendChild(el("p", { class: "empty" }, "Sin proyectos.")); return; }
     content.appendChild(el("div", { class: "grid" }, projects.map((p) =>
-      el("div", { class: "card clickable", onclick: () => { location.hash = `#/projects/${p.id}`; } },
+      el("div", { class: "card clickable", onclick: () => { location.hash = `${hashBase}/${p.id}`; } },
         el("h3", {}, p.project_name), el("p", { class: "muted" }, p.project_type || ""))
     )));
     return;
   }
 
-  content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = "#/projects"; } }, "Proyectos"), ` / ${projectId}`));
+  content.appendChild(el("div", { class: "breadcrumb" }, el("a", { onclick: () => { location.hash = hashBase; } }, "Proyectos"), ` / ${projectId}`));
   content.appendChild(el("h2", { class: "page-title" }, "Kanban"));
   const board = el("div", { class: "kanban" });
   content.appendChild(board);
@@ -701,7 +821,7 @@ route("projects", async (content, [projectId]) => {
   let draggedTaskId = null;
 
   async function renderBoard() {
-    const kanban = await api("GET", `/api/projects/${projectId}/kanban`);
+    const kanban = await api("GET", `/api/projects/${projectId}/kanban${q}`);
     board.innerHTML = "";
     for (const col of kanban.columns || []) {
       const taskList = el("div", { class: "kanban-tasks" },
@@ -726,7 +846,7 @@ route("projects", async (content, [projectId]) => {
         column.classList.remove("drag-over");
         const taskId = draggedTaskId || e.dataTransfer.getData("text/plain");
         if (!taskId) return;
-        await api("PUT", `/api/projects/tasks/${taskId}`, { status: col.status });
+        await api("PUT", `/api/projects/tasks/${taskId}${q}`, { status: col.status });
         await renderBoard();
       });
       board.appendChild(column);
@@ -752,6 +872,28 @@ route("projects", async (content, [projectId]) => {
   }
 
   await renderBoard();
+}
+
+route("projects", async (content, pathParts) => {
+  if (currentUser.role === "admin") {
+    await renderProjectsPanel(content, { tenant: "freya", projectId: pathParts[0], hashBase: "#/projects" });
+    return;
+  }
+  const grantedTenants = grantedTenantsFor("project-manager");
+  const [tenant, projectId] = pathParts;
+  if (!tenant) {
+    renderTenantPicker(content, {
+      title: "Proyectos", tenants: grantedTenants, hashBase: "#/projects",
+      emptyHint: "No tienes acceso a proyectos de ningún tenant todavía. Pide a un administrador que te dé acceso.",
+    });
+    return;
+  }
+  const decodedTenant = decodeURIComponent(tenant);
+  if (!grantedTenants.includes(decodedTenant)) {
+    content.appendChild(el("p", { class: "error" }, "No tienes acceso a los proyectos de ese tenant."));
+    return;
+  }
+  await renderProjectsPanel(content, { tenant: decodedTenant, projectId, hashBase: `#/projects/${tenant}` });
 });
 
 // --- admin: usuarios ------------------------------------------------------
@@ -973,17 +1115,42 @@ route("admin-tenants", async (content) => {
   content.appendChild(form);
   content.appendChild(formError);
 
+  const tenantsError = el("p", { class: "error hidden" });
+  content.appendChild(tenantsError);
+
   const tableBody = el("tbody", {});
   content.appendChild(el("table", {},
-    el("thead", {}, el("tr", {}, el("th", {}, "Id"), el("th", {}, "Nombre"), el("th", {}, "Creado"))),
+    el("thead", {}, el("tr", {}, el("th", {}, "Id"), el("th", {}, "Nombre"), el("th", {}, "Creado"), el("th", {}, ""))),
     tableBody,
   ));
+
+  async function deleteTenant(t) {
+    tenantsError.classList.add("hidden");
+    // Aviso de antemano, con el peso que corresponde a un borrado que se
+    // lleva TODO (storage, git, cicd, project-manager de ese proyecto) sin
+    // vuelta atrás -- pedido explícito del usuario. Escribir el id a mano
+    // es más difícil de disparar sin querer que un simple confirm().
+    const typed = prompt(
+      `Esto borra el tenant '${t.id}' (${t.name}) y TODO lo que tiene: storage, repositorios git, pipelines de CI/CD y proyectos. No se puede deshacer.\n\nEscribe "${t.id}" para confirmar:`
+    );
+    if (typed !== t.id) return;
+    try {
+      await api("DELETE", `/api/admin/tenants/${encodeURIComponent(t.id)}`);
+      await renderTenants();
+    } catch (err) {
+      tenantsError.textContent = err.message;
+      tenantsError.classList.remove("hidden");
+    }
+  }
 
   async function renderTenants() {
     const tenants = await api("GET", "/api/admin/tenants");
     tableBody.innerHTML = "";
     for (const t of tenants) {
-      tableBody.appendChild(el("tr", {}, el("td", {}, t.id), el("td", {}, t.name), el("td", {}, t.created_at || "")));
+      tableBody.appendChild(el("tr", {}, el("td", {}, t.id), el("td", {}, t.name), el("td", {}, t.created_at || ""),
+        el("td", {}, t.id === "freya" ? "" : el("button", {
+          class: "btn btn-danger", type: "button", onclick: () => deleteTenant(t),
+        }, "Eliminar"))));
     }
   }
 

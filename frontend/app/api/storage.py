@@ -162,6 +162,47 @@ def _tree_to_list(node: dict[str, dict]) -> list[dict]:
     return result
 
 
+@router.get("/{bucket}/trash")
+async def list_trash(
+    bucket: str,
+    client: StorageClient,
+    prefix: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    project: str | None = None,
+) -> dict:
+    _assert_visible(bucket)
+    tenant = _resolve_tenant(bucket, project)
+    params: dict[str, str | int] = {"limit": limit}
+    if prefix:
+        params["prefix"] = prefix
+    if cursor:
+        params["cursor"] = cursor
+    return ServiceClient.data(
+        await client.get(f"/storage/{bucket}/trash", params=params, tenant=tenant)
+    )
+
+
+@router.post("/{bucket}/trash/{object_id}/restore")
+async def restore_from_trash(
+    bucket: str, object_id: str, client: StorageClient, project: str | None = None
+) -> dict:
+    _assert_visible(bucket)
+    tenant = _resolve_tenant(bucket, project)
+    return ServiceClient.data(
+        await client.post(f"/storage/{bucket}/trash/{object_id}/restore", tenant=tenant)
+    )
+
+
+@router.delete("/{bucket}/trash/{object_id}", status_code=204)
+async def purge_from_trash(
+    bucket: str, object_id: str, client: StorageClient, project: str | None = None
+) -> None:
+    _assert_visible(bucket)
+    tenant = _resolve_tenant(bucket, project)
+    await client.delete(f"/storage/{bucket}/trash/{object_id}", tenant=tenant)
+
+
 @router.get("/{bucket}")
 async def list_objects(
     bucket: str,
